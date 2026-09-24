@@ -48,7 +48,7 @@ type WagerTransactionRejectedData struct {
 	Money           Money             `json:"money"`
 	FailureCode     wager.FailureCode `json:"failureCode"`
 	Correctable     bool              `json:"correctable"`
-	BalanceObserved Money             `json:"balanceObserved"`
+	BalanceObserved *Money            `json:"balanceObserved,omitempty"`
 	RejectedAt      time.Time         `json:"rejectedAt"`
 }
 
@@ -99,17 +99,20 @@ func NewWagerTransactionRejected(tx *wager.Transaction, m Metadata) (Event, erro
 		return Event{}, fmt.Errorf("%w: rejection events require an external transaction", ErrInvalidEvent)
 	}
 	code, _ := tx.FailureCode()
-	balance, _ := tx.BalanceAfter()
 	completed, _ := tx.CompletedAt()
 
-	return newEvent(WagerTransactionRejected, tx.ID(), m, WagerTransactionRejectedData{
-		TransactionRef:  transactionRef(tx),
-		Money:           moneyOf(tx.Amount()),
-		FailureCode:     code,
-		Correctable:     code.Correctable(),
-		BalanceObserved: moneyOf(balance),
-		RejectedAt:      completed,
-	})
+	data := WagerTransactionRejectedData{
+		TransactionRef: transactionRef(tx),
+		Money:          moneyOf(tx.Amount()),
+		FailureCode:    code,
+		Correctable:    code.Correctable(),
+		RejectedAt:     completed,
+	}
+	if balance, ok := tx.BalanceAfter(); ok {
+		observed := moneyOf(balance)
+		data.BalanceObserved = &observed
+	}
+	return newEvent(WagerTransactionRejected, tx.ID(), m, data)
 }
 
 func NewWagerTransactionPendingReference(tx *wager.Transaction, m Metadata) (Event, error) {

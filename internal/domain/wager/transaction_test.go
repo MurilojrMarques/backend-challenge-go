@@ -330,7 +330,9 @@ func TestRejectAndFail(t *testing.T) {
 	rejected := f.mustExternal(t, wager.Bet, brl("125.00"), "tx-1", "")
 	assert.ErrorIs(t, rejected.Reject(wager.PermanentFailure, observed, now), wager.ErrInvalidFailureCode)
 	assert.ErrorIs(t, rejected.Reject("NOPE", observed, now), wager.ErrInvalidFailureCode)
-	assert.ErrorIs(t, rejected.Reject(wager.InsufficientFunds, money.Money{}, now), wager.ErrInvalidTransaction)
+	usdObserved, err := money.FromUnits(100, usd)
+	require.NoError(t, err)
+	assert.ErrorIs(t, rejected.Reject(wager.InsufficientFunds, usdObserved, now), wager.ErrInvalidTransaction)
 	assert.ErrorIs(t, rejected.Reject(wager.InsufficientFunds, observed, time.Time{}), wager.ErrInvalidTransaction)
 	assert.ErrorIs(t, rejected.Fail(time.Time{}), wager.ErrInvalidTransaction)
 	assert.Equal(t, wager.Pending, rejected.Status())
@@ -345,6 +347,11 @@ func TestRejectAndFail(t *testing.T) {
 	assert.True(t, observed.Equal(balance), "rejection records the observed balance")
 	_, ok = rejected.CompletedAt()
 	assert.True(t, ok)
+
+	withoutBalance := f.mustExternal(t, wager.Bet, brl("25.00"), "tx-3", "")
+	require.NoError(t, withoutBalance.Reject(wager.CurrencyMismatch, money.Money{}, now))
+	_, ok = withoutBalance.BalanceAfter()
+	assert.False(t, ok, "a rejection may carry no observed balance")
 
 	failed := f.mustExternal(t, wager.Bet, brl("25.00"), "tx-2", "")
 	require.NoError(t, failed.Fail(now))
@@ -504,10 +511,11 @@ func TestRehydrateRejectsInvalid(t *testing.T) {
 			s.FailureCode = wager.PermanentFailure
 			return s
 		}, wager.ErrInvalidFailureCode},
-		"rejected without balance": {
+		"rejected with foreign balance": {
 			func() wager.Snapshot {
 				s := base
-				s.Status, s.FailureCode, s.BalanceAfter = wager.Rejected, wager.InsufficientFunds, money.Money{}
+				usdBalance, _ := money.FromUnits(100, usd)
+				s.Status, s.FailureCode, s.BalanceAfter = wager.Rejected, wager.InsufficientFunds, usdBalance
 				return s
 			},
 			wager.ErrInvalidTransaction,

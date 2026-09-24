@@ -252,8 +252,10 @@ func (t *Transaction) Reject(code FailureCode, observed money.Money, now time.Ti
 	if !code.Rejection() {
 		return fmt.Errorf("%w: %q is not a rejection code", ErrInvalidFailureCode, code)
 	}
-	if err := validResultBalance(observed, t.amount); err != nil {
-		return err
+	if observed.Validate() == nil {
+		if err := validResultBalance(observed, t.amount); err != nil {
+			return err
+		}
 	}
 	if err := t.transition(Rejected, now); err != nil {
 		return err
@@ -486,8 +488,10 @@ func (s Snapshot) validState() error {
 		if !s.FailureCode.Rejection() {
 			return fmt.Errorf("%w: rejected transaction requires a rejection code", ErrInvalidFailureCode)
 		}
-		if err := validResultBalance(s.BalanceAfter, s.Amount); err != nil {
-			return err
+		if hasBalance {
+			if err := validResultBalance(s.BalanceAfter, s.Amount); err != nil {
+				return err
+			}
 		}
 	case Failed:
 		if s.FailureCode != PermanentFailure {
