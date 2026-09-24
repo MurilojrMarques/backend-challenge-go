@@ -13,7 +13,7 @@ ENV CGO_ENABLED=0 \
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=bind,source=go.mod,target=go.mod \
     --mount=type=bind,source=go.sum,target=go.sum \
-    go mod download
+    go mod download && go mod verify
 
 COPY . .
 
