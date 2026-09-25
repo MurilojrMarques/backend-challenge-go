@@ -161,7 +161,7 @@ func cloneMap[K comparable, V any](m map[K]V) map[K]V {
 }
 
 func conflict(constraint string) error {
-	return fmt.Errorf("%w: %s", application.ErrConflict, constraint)
+	return &application.ConflictError{Constraint: constraint}
 }
 
 type memWallets struct{ tx *memTx }

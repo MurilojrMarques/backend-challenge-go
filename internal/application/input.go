@@ -17,11 +17,11 @@ type MoneyInput struct {
 func (m MoneyInput) Parse() (money.Money, error) {
 	currency, err := money.ParseCurrency(strings.TrimSpace(m.Currency))
 	if err != nil {
-		return money.Money{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return money.Money{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	amount, err := money.Parse(m.Amount, currency)
 	if err != nil {
-		return money.Money{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return money.Money{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	return amount, nil
 }

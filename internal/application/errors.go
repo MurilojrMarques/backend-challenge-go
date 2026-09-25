@@ -1,6 +1,21 @@
 package application
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
+
+type ConflictError struct {
+	Constraint string
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("app: conflict on %s", e.Constraint)
+}
+
+func (e *ConflictError) Is(target error) bool {
+	return target == ErrConflict
+}
 
 var (
 	ErrNotFound               = errors.New("app: not found")

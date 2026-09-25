@@ -45,7 +45,7 @@ func (c Command) parse() (parsedCommand, error) {
 
 	kind, err := wager.ParseKind(c.Kind)
 	if err != nil {
-		return parsedCommand{}, fmt.Errorf("%w: %v", application.ErrInvalidInput, err)
+		return parsedCommand{}, fmt.Errorf("%w: %w", application.ErrInvalidInput, err)
 	}
 	if !kind.External() {
 		return parsedCommand{}, fmt.Errorf("%w: %w", application.ErrInvalidInput, wager.ErrKindNotAllowed)

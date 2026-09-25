@@ -23,12 +23,7 @@ func (e *ConstraintError) Error() string {
 }
 
 func (e *ConstraintError) Is(target error) bool {
-	switch e.Code {
-	case "23505":
-		return target == application.ErrConflict
-	default:
-		return target == application.ErrIntegrity
-	}
+	return target == application.ErrIntegrity
 }
 
 func translate(err error) error {
@@ -56,7 +51,9 @@ func translate(err error) error {
 
 func translatePgError(pgErr *pgconn.PgError) error {
 	switch pgErr.Code {
-	case "23505", "23514", "23503", "23502", "23001", "23000":
+	case "23505":
+		return &application.ConflictError{Constraint: pgErr.ConstraintName}
+	case "23514", "23503", "23502", "23001", "23000":
 		return &ConstraintError{Code: pgErr.Code, Constraint: pgErr.ConstraintName, Table: pgErr.TableName}
 	case "40001", "40P01", "55P03", "57P01", "57P02", "57P03", "53300", "53400":
 		return fmt.Errorf("%w: %s (%s)", application.ErrUnavailable, pgErr.Message, pgErr.Code)

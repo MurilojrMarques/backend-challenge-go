@@ -61,11 +61,16 @@ func TestConstraintErrorExposesName(t *testing.T) {
 	t.Parallel()
 
 	err := translate(pgErr("23505", "wager_transactions_idempotency_key"))
+	var conflict *application.ConflictError
+	require.True(t, errors.As(err, &conflict))
+	assert.Equal(t, "wager_transactions_idempotency_key", conflict.Constraint)
+	assert.Contains(t, conflict.Error(), "wager_transactions_idempotency_key")
+
+	err = translate(pgErr("23514", "wallets_balance_non_negative"))
 	var ce *ConstraintError
 	require.True(t, errors.As(err, &ce))
-	assert.Equal(t, "wager_transactions_idempotency_key", ce.Constraint)
-	assert.Equal(t, "23505", ce.Code)
-	assert.Contains(t, ce.Error(), "wager_transactions_idempotency_key")
+	assert.Equal(t, "wallets_balance_non_negative", ce.Constraint)
+	assert.Equal(t, "23514", ce.Code)
 }
 
 func TestTranslateKeepsUnknownErrors(t *testing.T) {
