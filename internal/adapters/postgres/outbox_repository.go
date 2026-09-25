@@ -86,14 +86,20 @@ func (r *outboxRepo) Append(ctx context.Context, events ...event.Event) error {
 func (r *outboxRepo) Claim(ctx context.Context, publisher string, now time.Time, lease time.Duration, limit int) ([]application.OutboxRecord, error) {
 	rows, err := r.tx.Query(ctx, `
 		WITH due AS (
-			SELECT event_id
-			FROM outbox_events
-			WHERE published_at IS NULL
-			  AND next_attempt_at <= $2
-			  AND (locked_until IS NULL OR locked_until <= $2)
-			ORDER BY next_attempt_at, occurred_at
+			SELECT o.event_id
+			FROM outbox_events o
+			WHERE o.published_at IS NULL
+			  AND o.next_attempt_at <= $2
+			  AND (o.locked_until IS NULL OR o.locked_until <= $2)
+			  AND NOT EXISTS (
+			      SELECT 1 FROM outbox_events older
+			      WHERE older.aggregate_id = o.aggregate_id
+			        AND older.published_at IS NULL
+			        AND (older.occurred_at, older.event_id) < (o.occurred_at, o.event_id)
+			  )
+			ORDER BY o.occurred_at, o.event_id
 			LIMIT $4
-			FOR UPDATE SKIP LOCKED
+			FOR UPDATE OF o SKIP LOCKED
 		)
 		UPDATE outbox_events o
 		   SET locked_by = $1, locked_until = $3

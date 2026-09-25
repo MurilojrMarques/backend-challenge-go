@@ -31,8 +31,9 @@ CREATE TABLE outbox_events (
 );
 
 CREATE INDEX outbox_events_pending
-    ON outbox_events (next_attempt_at, occurred_at)
+    ON outbox_events (occurred_at, event_id)
     WHERE published_at IS NULL;
 
-CREATE INDEX outbox_events_by_aggregate
-    ON outbox_events (aggregate_id, occurred_at);
+CREATE INDEX outbox_events_pending_by_aggregate
+    ON outbox_events (aggregate_id, occurred_at, event_id)
+    WHERE published_at IS NULL;

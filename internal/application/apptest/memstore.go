@@ -451,20 +451,43 @@ func (r *memOutbox) Append(_ context.Context, events ...event.Event) error {
 }
 
 func (r *memOutbox) Claim(_ context.Context, publisher string, now time.Time, lease time.Duration, limit int) ([]application.OutboxRecord, error) {
-	var out []application.OutboxRecord
-	for id, rec := range r.tx.outbox {
-		if rec.Published() || rec.NextAttemptAt.After(now) || (rec.Locked() && rec.LockedUntil.After(now)) {
-			continue
+	pending := make([]application.OutboxRecord, 0, len(r.tx.outbox))
+	for _, rec := range r.tx.outbox {
+		if !rec.Published() {
+			pending = append(pending, rec)
 		}
-		rec.LockedBy, rec.LockedUntil = publisher, now.Add(lease)
-		r.tx.outbox[id] = rec
-		out = append(out, rec)
+	}
+	sort.Slice(pending, func(i, j int) bool { return before(pending[i], pending[j]) })
+
+	var out []application.OutboxRecord
+	for _, rec := range pending {
 		if len(out) == limit {
 			break
 		}
+		if rec.NextAttemptAt.After(now) || (rec.Locked() && rec.LockedUntil.After(now)) || r.olderPending(pending, rec) {
+			continue
+		}
+		rec.LockedBy, rec.LockedUntil = publisher, now.Add(lease)
+		r.tx.outbox[rec.EventID] = rec
+		out = append(out, rec)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].OccurredAt.Before(out[j].OccurredAt) })
 	return out, nil
+}
+
+func (r *memOutbox) olderPending(pending []application.OutboxRecord, rec application.OutboxRecord) bool {
+	for _, other := range pending {
+		if other.AggregateID == rec.AggregateID && other.EventID != rec.EventID && before(other, rec) {
+			return true
+		}
+	}
+	return false
+}
+
+func before(a, b application.OutboxRecord) bool {
+	if a.OccurredAt.Equal(b.OccurredAt) {
+		return a.EventID.String() < b.EventID.String()
+	}
+	return a.OccurredAt.Before(b.OccurredAt)
 }
 
 func (r *memOutbox) MarkPublished(_ context.Context, eventID uuid.UUID, publisher string, at time.Time) error {

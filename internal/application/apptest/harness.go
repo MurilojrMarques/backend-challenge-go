@@ -14,6 +14,7 @@ import (
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application"
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application/wagering"
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application/wallets"
+	"github.com/MurilojrMarques/backend-challenge-go/internal/domain/event"
 	"github.com/MurilojrMarques/backend-challenge-go/internal/domain/money"
 	"github.com/MurilojrMarques/backend-challenge-go/internal/domain/wager"
 )
@@ -74,6 +75,32 @@ func (m *RecordingMetrics) ReconciliationChecked(consistent bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.reconciled[consistent]++
+}
+
+func (m *RecordingMetrics) MessageHandled(outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.concluded["message/"+outcome]++
+}
+
+func (m *RecordingMetrics) OutboxPublished(t event.Type) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.concluded["outbox/published/"+string(t)]++
+}
+
+func (m *RecordingMetrics) OutboxRetried(t event.Type) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.concluded["outbox/retried/"+string(t)]++
+}
+
+func (m *RecordingMetrics) OutboxLag(time.Duration, int) {}
+
+func (m *RecordingMetrics) Count(key string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.concluded[key]
 }
 
 func (m *RecordingMetrics) Concluded(kind wager.Kind, status wager.Status, code wager.FailureCode) int {

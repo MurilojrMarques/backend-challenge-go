@@ -103,6 +103,10 @@ type Metrics interface {
 	IdempotentReplay(source string)
 	ConcurrencyConflict(operation string)
 	ReconciliationChecked(consistent bool)
+	MessageHandled(outcome string)
+	OutboxPublished(eventType event.Type)
+	OutboxRetried(eventType event.Type)
+	OutboxLag(oldest time.Duration, pending int)
 }
 
 type NopMetrics struct{}
@@ -111,6 +115,28 @@ func (NopMetrics) WagerConcluded(wager.Kind, wager.Status, wager.FailureCode) {}
 func (NopMetrics) IdempotentReplay(string)                                    {}
 func (NopMetrics) ConcurrencyConflict(string)                                 {}
 func (NopMetrics) ReconciliationChecked(bool)                                 {}
+func (NopMetrics) MessageHandled(string)                                      {}
+func (NopMetrics) OutboxPublished(event.Type)                                 {}
+func (NopMetrics) OutboxRetried(event.Type)                                   {}
+func (NopMetrics) OutboxLag(time.Duration, int)                               {}
+
+type Message struct {
+	ID            string
+	ReceiptHandle string
+	Body          []byte
+	ReceiveCount  int
+}
+
+type Queue interface {
+	Receive(ctx context.Context) ([]Message, error)
+	Delete(ctx context.Context, receiptHandle string) error
+	ChangeVisibility(ctx context.Context, receiptHandle string, timeout time.Duration) error
+	SendToDeadLetter(ctx context.Context, msg Message, reason string) error
+}
+
+type EventPublisher interface {
+	Publish(ctx context.Context, rec OutboxRecord) error
+}
 
 type HealthChecker interface {
 	Name() string
