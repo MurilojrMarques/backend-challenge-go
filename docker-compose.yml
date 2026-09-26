@@ -135,9 +135,9 @@ services:
         - CMD-SHELL
         - >-
           out=$$(curl -sf http://localhost:4566/_localstack/init/ready) &&
-          echo "$$out" | grep -q '"completed": true' &&
-          echo "$$out" | grep -q '"state": "SUCCESSFUL"' &&
-          ! echo "$$out" | grep -q '"state": "ERROR"'
+          echo "$$out" | grep -Eq '"completed": ?true' &&
+          echo "$$out" | grep -Eq '"state": ?"SUCCESSFUL"' &&
+          ! echo "$$out" | grep -Eq '"state": ?"ERROR"'
       interval: 5s
       timeout: 3s
       retries: 20

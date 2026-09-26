@@ -77,7 +77,7 @@ func (m *RecordingMetrics) ReconciliationChecked(consistent bool) {
 	m.reconciled[consistent]++
 }
 
-func (m *RecordingMetrics) MessageHandled(outcome string) {
+func (m *RecordingMetrics) MessageHandled(outcome string, _ time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.concluded["message/"+outcome]++

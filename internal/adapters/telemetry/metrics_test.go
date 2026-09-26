@@ -26,7 +26,7 @@ func TestMetricsRecordApplicationSignals(t *testing.T) {
 	m.ConcurrencyConflict("wallet.save")
 	m.ReconciliationChecked(true)
 	m.ReconciliationChecked(false)
-	m.MessageHandled("processed")
+	m.MessageHandled("processed", 12*time.Millisecond)
 	m.OutboxPublished(event.WagerTransactionProcessed)
 	m.OutboxRetried(event.WalletBalanceChanged)
 	m.OutboxLag(1500*time.Millisecond, 7)
@@ -38,6 +38,7 @@ func TestMetricsRecordApplicationSignals(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(m.reconciliations.WithLabelValues("true")))
 	assert.Equal(t, 1.0, testutil.ToFloat64(m.reconciliations.WithLabelValues("false")))
 	assert.Equal(t, 1.0, testutil.ToFloat64(m.messages.WithLabelValues("processed")))
+	assert.Equal(t, 1, testutil.CollectAndCount(m.messageLatency))
 	assert.Equal(t, 1.0, testutil.ToFloat64(m.published.WithLabelValues("WagerTransactionProcessed")))
 	assert.Equal(t, 1.0, testutil.ToFloat64(m.retried.WithLabelValues("WalletBalanceChanged")))
 	assert.Equal(t, 1.5, testutil.ToFloat64(m.outboxAge))
@@ -64,7 +65,7 @@ func TestMetricsObserveHTTPRequests(t *testing.T) {
 func TestHandlerExposesPrivateRegistry(t *testing.T) {
 	t.Parallel()
 	m := NewMetrics()
-	m.MessageHandled("processed")
+	m.MessageHandled("processed", time.Millisecond)
 
 	rec := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))

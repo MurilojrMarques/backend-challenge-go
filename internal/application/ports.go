@@ -103,7 +103,7 @@ type Metrics interface {
 	IdempotentReplay(source string)
 	ConcurrencyConflict(operation string)
 	ReconciliationChecked(consistent bool)
-	MessageHandled(outcome string)
+	MessageHandled(outcome string, elapsed time.Duration)
 	OutboxPublished(eventType event.Type)
 	OutboxRetried(eventType event.Type)
 	OutboxLag(oldest time.Duration, pending int)
@@ -115,7 +115,7 @@ func (NopMetrics) WagerConcluded(wager.Kind, wager.Status, wager.FailureCode) {}
 func (NopMetrics) IdempotentReplay(string)                                    {}
 func (NopMetrics) ConcurrencyConflict(string)                                 {}
 func (NopMetrics) ReconciliationChecked(bool)                                 {}
-func (NopMetrics) MessageHandled(string)                                      {}
+func (NopMetrics) MessageHandled(string, time.Duration)                       {}
 func (NopMetrics) OutboxPublished(event.Type)                                 {}
 func (NopMetrics) OutboxRetried(event.Type)                                   {}
 func (NopMetrics) OutboxLag(time.Duration, int)                               {}

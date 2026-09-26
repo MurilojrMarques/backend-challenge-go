@@ -28,6 +28,7 @@ type Metrics struct {
 	conflicts       *prometheus.CounterVec
 	reconciliations *prometheus.CounterVec
 	messages        *prometheus.CounterVec
+	messageLatency  *prometheus.HistogramVec
 	published       *prometheus.CounterVec
 	retried         *prometheus.CounterVec
 	outboxAge       prometheus.Gauge
@@ -64,6 +65,10 @@ func NewMetrics() *Metrics {
 		messages: f.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Name: "messages_handled_total",
 			Help: "Inbound queue messages, by handling outcome.",
+		}, []string{"outcome"}),
+		messageLatency: f.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace, Name: "message_processing_duration_seconds",
+			Help: "Time from picking an inbound message to its outcome, by outcome.", Buckets: latencyBuckets,
 		}, []string{"outcome"}),
 		published: f.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Name: "outbox_published_total",
@@ -108,8 +113,9 @@ func (m *Metrics) ReconciliationChecked(consistent bool) {
 	m.reconciliations.WithLabelValues(strconv.FormatBool(consistent)).Inc()
 }
 
-func (m *Metrics) MessageHandled(outcome string) {
+func (m *Metrics) MessageHandled(outcome string, elapsed time.Duration) {
 	m.messages.WithLabelValues(outcome).Inc()
+	m.messageLatency.WithLabelValues(outcome).Observe(elapsed.Seconds())
 }
 
 func (m *Metrics) OutboxPublished(t event.Type) {

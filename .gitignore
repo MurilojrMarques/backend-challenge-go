@@ -30,3 +30,6 @@ Thumbs.db
 desktop.ini
 
 *.log
+
+deploy/postman/*.postman_environment.json
+!deploy/postman/local.postman_environment.json

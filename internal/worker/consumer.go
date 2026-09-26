@@ -80,11 +80,13 @@ func (c *Consumer) tick(ctx context.Context) (bool, error) {
 func (c *Consumer) handle(ctx context.Context, m application.Message, budget time.Duration, b *batch) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
 	defer cancel()
+	started := c.now()
+	observe := func(outcome string) { c.metrics.MessageHandled(outcome, c.now().Sub(started)) }
 	log := c.logger.With("messageId", m.ID, "groupId", m.GroupID, "receiveCount", m.ReceiveCount)
 
 	inbound, err := wagering.ParseEnvelope(c.opts.ConsumerName, m.Body)
 	if err != nil {
-		c.deadLetter(ctx, log, m, "invalid_envelope", err)
+		c.deadLetter(ctx, log, m, "invalid_envelope", err, observe)
 		return
 	}
 	log = log.With("providerId", inbound.Command.ProviderID, "externalTransactionId", inbound.Command.ExternalTransactionID)
@@ -93,19 +95,19 @@ func (c *Consumer) handle(ctx context.Context, m application.Message, budget tim
 	switch {
 	case err == nil:
 		c.fault.Trigger(FaultConsumerAfterCommit)
-		c.ack(ctx, log, m, res)
+		c.ack(ctx, log, m, res, observe)
 	case errors.Is(err, application.ErrMessageInFlight):
-		c.metrics.MessageHandled("in_flight")
+		observe("in_flight")
 		log.InfoContext(ctx, "message already being processed by another consumer")
 		b.hold(m.GroupID, c.opts.RetryBackoff.Next(m.ReceiveCount))
 	case isPermanent(err):
-		c.deadLetter(ctx, log, m, reasonFor(err), err)
+		c.deadLetter(ctx, log, m, reasonFor(err), err, observe)
 	default:
-		b.hold(m.GroupID, c.retryLater(ctx, log, m, err))
+		b.hold(m.GroupID, c.retryLater(ctx, log, m, err, observe))
 	}
 }
 
-func (c *Consumer) ack(ctx context.Context, log *slog.Logger, m application.Message, res wagering.Result) {
+func (c *Consumer) ack(ctx context.Context, log *slog.Logger, m application.Message, res wagering.Result, observe func(string)) {
 	outcome := "processed"
 	switch {
 	case res.IdempotentReplay:
@@ -117,14 +119,14 @@ func (c *Consumer) ack(ctx context.Context, log *slog.Logger, m application.Mess
 	}
 	if err := c.queue.Delete(ctx, m.ReceiptHandle); err != nil {
 		log.WarnContext(ctx, "message handled but not deleted; redelivery will replay", "err", err)
-		c.metrics.MessageHandled("ack_failed")
+		observe("ack_failed")
 		return
 	}
-	c.metrics.MessageHandled(outcome)
+	observe(outcome)
 	log.InfoContext(ctx, "message handled", "outcome", outcome, "transactionId", res.TransactionID, "status", res.Status)
 }
 
-func (c *Consumer) deadLetter(ctx context.Context, log *slog.Logger, m application.Message, reason string, cause error) {
+func (c *Consumer) deadLetter(ctx context.Context, log *slog.Logger, m application.Message, reason string, cause error, observe func(string)) {
 	if err := c.queue.SendToDeadLetter(ctx, m, reason); err != nil {
 		log.ErrorContext(ctx, "cannot move message to the dead-letter queue", "reason", reason, "cause", cause, "err", err)
 		return
@@ -133,18 +135,18 @@ func (c *Consumer) deadLetter(ctx context.Context, log *slog.Logger, m applicati
 		log.WarnContext(ctx, "message copied to dlq but not deleted", "err", err)
 		return
 	}
-	c.metrics.MessageHandled("dead_letter")
+	observe("dead_letter")
 	log.WarnContext(ctx, "message moved to the dead-letter queue", "reason", reason, "cause", cause)
 }
 
-func (c *Consumer) retryLater(ctx context.Context, log *slog.Logger, m application.Message, cause error) time.Duration {
+func (c *Consumer) retryLater(ctx context.Context, log *slog.Logger, m application.Message, cause error, observe func(string)) time.Duration {
 	delay := c.opts.RetryBackoff.Next(m.ReceiveCount)
 	if err := c.queue.ChangeVisibility(ctx, m.ReceiptHandle, delay); err != nil {
 		log.WarnContext(ctx, "transient failure; visibility unchanged", "cause", cause, "err", err)
 	} else {
 		log.WarnContext(ctx, "transient failure; message will be redelivered", "cause", cause, "retryIn", delay.String())
 	}
-	c.metrics.MessageHandled("retry")
+	observe("retry")
 	return delay
 }
 
@@ -154,7 +156,7 @@ func (c *Consumer) holdBack(ctx context.Context, m application.Message, delay ti
 	if err := c.queue.ChangeVisibility(dctx, m.ReceiptHandle, delay); err != nil {
 		c.logger.WarnContext(dctx, "message of a held group keeps its visibility", "messageId", m.ID, "groupId", m.GroupID, "err", err)
 	}
-	c.metrics.MessageHandled("held_back")
+	c.metrics.MessageHandled("held_back", 0)
 	c.logger.InfoContext(dctx, "message held back behind an earlier failure of its group", "messageId", m.ID, "groupId", m.GroupID, "retryIn", delay.String())
 }
 
@@ -169,7 +171,7 @@ func (c *Consumer) giveBack(ctx context.Context, msgs []application.Message) {
 			c.logger.WarnContext(dctx, "message not returned to the queue; it reappears when its visibility expires", "messageId", m.ID, "err", err)
 		}
 	}
-	c.metrics.MessageHandled("returned")
+	c.metrics.MessageHandled("returned", 0)
 	c.logger.InfoContext(dctx, "returned unprocessed messages to the queue", "count", len(msgs))
 }
 
