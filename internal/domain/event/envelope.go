@@ -100,7 +100,7 @@ func newEvent(t Type, aggregateID uuid.UUID, m Metadata, data any) (Event, error
 	}
 	id, err := uuid.NewV7()
 	if err != nil {
-		return Event{}, fmt.Errorf("%w: %v", ErrInvalidEvent, err)
+		return Event{}, fmt.Errorf("%w: %w", ErrInvalidEvent, err)
 	}
 	return Event{
 		ID:            id,
@@ -131,8 +131,8 @@ type rawEvent struct {
 
 func Decode(b []byte) (Event, error) {
 	var raw rawEvent
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return Event{}, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
+	if err := strictDecode(b, &raw); err != nil {
+		return Event{}, fmt.Errorf("%w: %w", ErrInvalidPayload, err)
 	}
 	if !raw.Type.Valid() {
 		return Event{}, fmt.Errorf("%w: %q", ErrUnknownType, raw.Type)
@@ -178,11 +178,24 @@ func decodeData(t Type, raw json.RawMessage) (any, error) {
 
 func decodeInto[T any](t Type, raw json.RawMessage) (T, error) {
 	var data T
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&data); err != nil {
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return data, fmt.Errorf("%w: %s: missing data", ErrInvalidPayload, t)
+	}
+	if err := strictDecode(raw, &data); err != nil {
 		var zero T
-		return zero, fmt.Errorf("%w: %s: %v", ErrInvalidPayload, t, err)
+		return zero, fmt.Errorf("%w: %s: %w", ErrInvalidPayload, t, err)
 	}
 	return data, nil
+}
+
+func strictDecode(raw []byte, into any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(into); err != nil {
+		return err
+	}
+	if dec.More() {
+		return errors.New("trailing data after json value")
+	}
+	return nil
 }

@@ -9,13 +9,16 @@ import (
 type Decision int
 
 const (
-	Proceed Decision = iota
+	Undecided Decision = iota
+	Proceed
 	Await
 	Reject
 )
 
 func (d Decision) String() string {
 	switch d {
+	case Undecided:
+		return "UNDECIDED"
 	case Proceed:
 		return "PROCEED"
 	case Await:

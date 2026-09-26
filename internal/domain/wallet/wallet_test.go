@@ -400,3 +400,18 @@ func TestNewLedgerEntryRejectsInvalid(t *testing.T) {
 		assert.Equal(t, wallet.LedgerEntry{}, e, name)
 	}
 }
+
+func TestApplyNeverMovesTheWalletBackInTime(t *testing.T) {
+	t.Parallel()
+	w := openWith(t, brl("100.00"))
+	m := movement(wallet.Debit, brl("10.00"))
+	m.Now = now.Add(-time.Hour)
+
+	entry, err := w.Apply(m)
+	require.NoError(t, err)
+	assert.Equal(t, w.CreatedAt(), entry.CreatedAt(), "an earlier clock is clamped to the last change")
+	assert.Equal(t, entry.CreatedAt(), w.UpdatedAt())
+
+	_, err = wallet.Rehydrate(w.Snapshot())
+	require.NoError(t, err)
+}

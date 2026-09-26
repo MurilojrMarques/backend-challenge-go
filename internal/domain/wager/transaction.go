@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -38,7 +40,7 @@ func (e External) HasReference() bool {
 	return e.ReferenceExternalTransactionID != ""
 }
 
-func (e External) validate(kind Kind) error {
+func (e External) Validate(kind Kind) error {
 	required := []struct{ name, value string }{
 		{"providerId", e.ProviderID},
 		{"externalTransactionId", e.ExternalTransactionID},
@@ -72,7 +74,8 @@ func (e External) validate(kind Kind) error {
 }
 
 func cleanField(s string) bool {
-	return s != "" && len(s) <= MaxFieldLength && strings.TrimSpace(s) == s
+	return s != "" && len(s) <= MaxFieldLength && utf8.ValidString(s) &&
+		strings.TrimSpace(s) == s && !strings.ContainsFunc(s, unicode.IsControl)
 }
 
 type Transaction struct {
@@ -115,7 +118,7 @@ func NewExternal(p ExternalParams) (*Transaction, error) {
 	if err := validAmount(p.Kind, p.Amount); err != nil {
 		return nil, err
 	}
-	if err := p.External.validate(p.Kind); err != nil {
+	if err := p.External.Validate(p.Kind); err != nil {
 		return nil, err
 	}
 
@@ -216,6 +219,9 @@ func (t *Transaction) ResolveReference(referenceID uuid.UUID, now time.Time) err
 	if referenceID == uuid.Nil || referenceID == t.id {
 		return fmt.Errorf("%w: invalid reference id", ErrInvalidReference)
 	}
+	if t.resolvedReferenceID != uuid.Nil && t.resolvedReferenceID != referenceID {
+		return fmt.Errorf("%w: already resolved to %s", ErrInvalidReference, t.resolvedReferenceID)
+	}
 	if t.status.Terminal() {
 		return fmt.Errorf("%w: %s is terminal", ErrInvalidTransition, t.status)
 	}
@@ -305,7 +311,11 @@ func (t *Transaction) ensureCanTransitionTo(to Status) error {
 }
 
 func (t *Transaction) touch(now time.Time) {
-	t.updatedAt = now.UTC()
+	now = now.UTC()
+	if now.Before(t.updatedAt) {
+		now = t.updatedAt
+	}
+	t.updatedAt = now
 }
 
 func (t *Transaction) CheckReplay(idempotencyKey, payloadHash string) error {
@@ -455,18 +465,24 @@ func (s Snapshot) validShape() error {
 		return fmt.Errorf("%w: external metadata must be present exactly for external kinds", ErrInvalidTransaction)
 	}
 	if s.External != nil {
-		return s.External.validate(s.Kind)
+		return s.External.Validate(s.Kind)
 	}
 	return nil
 }
 
 func (s Snapshot) validState() error {
 	hasReference := s.External != nil && s.External.HasReference()
+	if s.Kind == Opening && s.Status != Processed {
+		return fmt.Errorf("%w: opening transactions are always processed", ErrInvalidTransaction)
+	}
 	if s.ReferenceAttempts < 0 {
 		return fmt.Errorf("%w: negative reference attempts", ErrInvalidTransaction)
 	}
 	if !hasReference && (s.Status == PendingReference || s.ResolvedReferenceID != uuid.Nil || s.ReferenceAttempts > 0) {
 		return fmt.Errorf("%w: reference state without a reference", ErrInvalidReference)
+	}
+	if s.Status == Pending && s.ReferenceAttempts > 0 {
+		return fmt.Errorf("%w: attempts recorded before the transaction waited for its reference", ErrInvalidTransaction)
 	}
 	if s.ResolvedReferenceID == s.ID && s.ID != uuid.Nil {
 		return fmt.Errorf("%w: transaction cannot reference itself", ErrInvalidReference)

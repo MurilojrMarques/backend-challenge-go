@@ -143,6 +143,9 @@ func NewWalletBalanceChanged(w *wallet.Wallet, entry wallet.LedgerEntry, m Metad
 	if !entry.BalanceAfter().Equal(w.Balance()) {
 		return Event{}, fmt.Errorf("%w: ledger entry balance %s does not match wallet balance %s", ErrInvalidEvent, entry.BalanceAfter(), w.Balance())
 	}
+	if !entry.CreatedAt().Equal(w.UpdatedAt()) {
+		return Event{}, fmt.Errorf("%w: ledger entry from %s is not the latest change of the wallet (%s)", ErrInvalidEvent, entry.CreatedAt(), w.UpdatedAt())
+	}
 
 	return newEvent(WalletBalanceChanged, w.ID(), m, WalletBalanceChangedData{
 		WalletID:      w.ID(),

@@ -561,3 +561,66 @@ func TestRehydrateRejectsInvalid(t *testing.T) {
 		assert.Nil(t, tx, name)
 	}
 }
+
+func TestTimestampsNeverRegress(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	earlier := now.Add(-time.Hour)
+
+	tx := f.mustExternal(t, wager.Rollback, brl("10.00"), "rb-1", "bet-1")
+	require.NoError(t, tx.AwaitReference(earlier))
+	assert.Equal(t, tx.CreatedAt(), tx.UpdatedAt(), "an earlier clock is clamped to the last known timestamp")
+
+	require.NoError(t, tx.ResolveReference(newID(), earlier))
+	require.NoError(t, tx.MarkProcessed(brl("10.00"), earlier))
+	completedAt, ok := tx.CompletedAt()
+	require.True(t, ok)
+	assert.Equal(t, tx.CreatedAt(), completedAt)
+
+	_, err := wager.Rehydrate(tx.Snapshot())
+	require.NoError(t, err, "a clamped transaction always rehydrates")
+}
+
+func TestFieldsRejectControlCharactersAndInvalidUTF8(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	for name, value := range map[string]string{
+		"nul":          "tx\x00",
+		"newline":      "tx\n1",
+		"invalid utf8": "tx\xff",
+	} {
+		_, err := wager.NewExternal(f.external(wager.Bet, brl("10.00"), value, ""))
+		assert.ErrorIs(t, err, wager.ErrInvalidTransaction, name)
+	}
+}
+
+func TestResolveReferenceIsStable(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	tx := f.mustExternal(t, wager.Refund, brl("10.00"), "refund-1", "bet-1")
+	ref := newID()
+	require.NoError(t, tx.ResolveReference(ref, now))
+	require.NoError(t, tx.ResolveReference(ref, now), "resolving to the same transaction again is idempotent")
+	assert.ErrorIs(t, tx.ResolveReference(newID(), now), wager.ErrInvalidReference)
+	resolved, ok := tx.ResolvedReferenceID()
+	require.True(t, ok)
+	assert.Equal(t, ref, resolved)
+}
+
+func TestRehydrateRejectsImpossibleStates(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+
+	opening, err := wager.NewOpening(wager.OpeningParams{ID: newID(), WalletID: f.walletID, PlayerID: f.playerID, Amount: brl("10.00"), Now: now})
+	require.NoError(t, err)
+	rejectedOpening := opening.Snapshot()
+	rejectedOpening.Status = wager.Rejected
+	rejectedOpening.FailureCode = wager.InsufficientFunds
+	_, err = wager.Rehydrate(rejectedOpening)
+	assert.ErrorIs(t, err, wager.ErrInvalidTransaction, "an opening transaction is always processed")
+
+	pending := f.mustExternal(t, wager.Rollback, brl("10.00"), "rb-1", "bet-1").Snapshot()
+	pending.ReferenceAttempts = 1
+	_, err = wager.Rehydrate(pending)
+	assert.ErrorIs(t, err, wager.ErrInvalidTransaction, "attempts imply the transaction waited for its reference")
+}

@@ -167,6 +167,10 @@ func (w *Wallet) Apply(m Movement) (LedgerEntry, error) {
 		return LedgerEntry{}, fmt.Errorf("%w: balance %s, debit %s", ErrInsufficientFunds, w.balance, m.Amount)
 	}
 
+	at := m.Now.UTC()
+	if at.Before(w.updatedAt) {
+		at = w.updatedAt
+	}
 	entry, err := NewLedgerEntry(LedgerEntryParams{
 		ID:            m.EntryID,
 		WalletID:      w.id,
@@ -175,7 +179,7 @@ func (w *Wallet) Apply(m Movement) (LedgerEntry, error) {
 		Amount:        m.Amount,
 		BalanceBefore: w.balance,
 		BalanceAfter:  after,
-		CreatedAt:     m.Now,
+		CreatedAt:     at,
 	})
 	if err != nil {
 		return LedgerEntry{}, err

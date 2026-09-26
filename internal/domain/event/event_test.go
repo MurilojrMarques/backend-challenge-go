@@ -413,3 +413,47 @@ func TestDecodeRejectsInvalid(t *testing.T) {
 		assert.ErrorIs(t, err, tc.want, name)
 	}
 }
+
+func TestWalletBalanceChangedRejectsStaleEntry(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	w, first := f.debited(t)
+	for i, direction := range []wallet.Direction{wallet.Credit, wallet.Debit} {
+		_, err := w.Apply(wallet.Movement{
+			EntryID:       newID(),
+			TransactionID: newID(),
+			Direction:     direction,
+			Amount:        brl("25.00"),
+			Now:           now.Add(time.Duration(i+1) * time.Second),
+		})
+		require.NoError(t, err)
+	}
+	require.True(t, first.BalanceAfter().Equal(w.Balance()), "the balance coincides with an older entry")
+
+	_, err := event.NewWalletBalanceChanged(w, first, meta)
+	assert.ErrorIs(t, err, event.ErrInvalidEvent)
+}
+
+func TestDecodeRejectsMissingDataAndUnknownEnvelopeFields(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	w, entry := f.debited(t)
+	e, err := event.NewWalletBalanceChanged(w, entry, meta)
+	require.NoError(t, err)
+	raw, err := e.Encode()
+	require.NoError(t, err)
+	valid := string(raw)
+
+	var encoded map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &encoded))
+	data := string(encoded["data"])
+
+	for name, payload := range map[string]string{
+		"null data":              strings.Replace(valid, data, "null", 1),
+		"unknown envelope field": strings.Replace(valid, `"version":1`, `"version":1,"extra":true`, 1),
+		"trailing data":          valid + "{}",
+	} {
+		_, err := event.Decode([]byte(payload))
+		assert.ErrorIs(t, err, event.ErrInvalidPayload, name)
+	}
+}
