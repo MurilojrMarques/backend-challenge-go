@@ -70,7 +70,7 @@ CREATE TABLE wager_transactions (
     CONSTRAINT wager_reference_only_where_allowed
         CHECK (kind IN ('WIN', 'REFUND', 'ROLLBACK') OR reference_external_transaction_id IS NULL),
     CONSTRAINT wager_no_self_reference
-        CHECK (reference_external_transaction_id IS DISTINCT FROM external_transaction_id),
+        CHECK (reference_external_transaction_id IS NULL OR reference_external_transaction_id <> external_transaction_id),
     CONSTRAINT wager_no_self_resolution
         CHECK (resolved_reference_id IS DISTINCT FROM id),
     CONSTRAINT wager_reference_state_requires_reference

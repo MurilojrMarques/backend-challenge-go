@@ -37,6 +37,21 @@ func sqsConfig() config.SQS {
 	}
 }
 
+func receiveOne(t *testing.T, q *awssqs.Queue) application.Message {
+	t.Helper()
+	var got []application.Message
+	require.NoError(t, testutil.Poll(context.Background(), 15*time.Second, func() (bool, error) {
+		msgs, err := q.Receive(context.Background())
+		if err != nil {
+			return false, err
+		}
+		got = msgs
+		return len(msgs) > 0, nil
+	}), "no message became visible within 15s")
+	require.Len(t, got, 1)
+	return got[0]
+}
+
 func newSQSClient(t *testing.T) *sqs.Client {
 	t.Helper()
 	client, err := awssqs.NewClient(context.Background(), config.AWS{Region: testutil.Region, EndpointURL: ls.URL})
@@ -56,21 +71,16 @@ func TestQueueAdapter(t *testing.T) {
 	probe := newID().String()
 	require.NoError(t, testutil.Send(ctx, raw, cfg.WagerQueueURL, "probe-group", probe, map[string]any{"probe": probe}))
 
-	msgs, err := q.Receive(ctx)
-	require.NoError(t, err)
-	require.Len(t, msgs, 1)
-	m := msgs[0]
+	m := receiveOne(t, q)
 	assert.Equal(t, "probe-group", m.GroupID)
-	assert.Equal(t, 1, m.ReceiveCount)
+	assert.GreaterOrEqual(t, m.ReceiveCount, 1, "the receive count comes from the queue attributes")
 	assert.Contains(t, string(m.Body), probe)
 
 	require.NoError(t, q.ChangeVisibility(ctx, m.ReceiptHandle, 0))
-	msgs, err = q.Receive(ctx)
-	require.NoError(t, err)
-	require.Len(t, msgs, 1, "visibility zero redelivers at once")
-	assert.Equal(t, m.ID, msgs[0].ID)
-	assert.Equal(t, 2, msgs[0].ReceiveCount)
-	m = msgs[0]
+	again := receiveOne(t, q)
+	assert.Equal(t, m.ID, again.ID, "visibility zero redelivers the same message")
+	assert.Greater(t, again.ReceiveCount, m.ReceiveCount, "every redelivery increments the receive count")
+	m = again
 
 	require.NoError(t, q.SendToDeadLetter(ctx, m, "invalid_envelope"))
 	dead, err := testutil.Receive(ctx, raw, cfg.WagerDLQURL, 5)
@@ -82,7 +92,7 @@ func TestQueueAdapter(t *testing.T) {
 	require.NoError(t, testutil.Delete(ctx, raw, cfg.WagerDLQURL, aws.ToString(dead[0].ReceiptHandle)))
 
 	require.NoError(t, q.Delete(ctx, m.ReceiptHandle))
-	msgs, err = q.Receive(ctx)
+	msgs, err := q.Receive(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
 

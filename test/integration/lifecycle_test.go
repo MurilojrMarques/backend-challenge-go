@@ -28,7 +28,8 @@ func TestFxApplicationStartsServesAndStops(t *testing.T) {
 		"SQS_WAGER_QUEUE_URL":             ls.Queue(testutil.WagerQueue),
 		"SQS_WAGER_DLQ_URL":               ls.Queue(testutil.WagerDLQ),
 		"SQS_EVENTS_QUEUE_URL":            ls.Queue(testutil.EventsQueue),
-		"SQS_WAIT_TIME_SECONDS":           "1",
+		"SQS_WAIT_TIME_SECONDS":           "0",
+		"SQS_VISIBILITY_TIMEOUT_SECONDS":  "1",
 		"OUTBOX_POLL_INTERVAL":            "200ms",
 		"PENDING_REFERENCE_POLL_INTERVAL": "200ms",
 	} {

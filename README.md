@@ -301,7 +301,11 @@ A suíte de integração só precisa do Docker rodando: ela mesma sobe e derruba
 - E2E roda contra o compose de teste com três réplicas: readiness, ciclo da carteira entre réplicas, 50 envios iguais distribuídos, 80 mais 80 sobre 100, contrato de idempotência, reversão antes da referência, mesma operação por SQS e HTTP, mensagem envenenada na DLQ e ordem dos eventos publicados.
 - `make e2e-fault` sobe as réplicas sem os papéis `consumer` e `outbox`, roda o container `app-fault` com `FAULT_INJECT` e prova que o crash depois do commit e antes do ack não debita duas vezes, que o crash depois de publicar e antes de marcar não duplica o evento, e que um `docker compose restart` das réplicas preserva idempotência, pendências e consistência. O processo sai com código 3 quando a falha injetada dispara.
 
-`go test -race` exige cgo e roda em Linux ou macOS. No Windows sem toolchain C use o `make test` normal.
+`go test -race` exige cgo e roda direto em Linux ou macOS. No Windows sem toolchain C, rode dentro da imagem oficial do Go, com o repositório montado:
+
+```
+docker run --rm -v "${PWD}:/src" -w /src -v wallet-gomod:/go/pkg/mod -v wallet-gocache:/root/.cache/go-build golang:1.27.1 go test -race -count=1 ./...
+```
 
 ## Limitações conhecidas
 

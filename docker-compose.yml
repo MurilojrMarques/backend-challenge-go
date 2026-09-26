@@ -101,7 +101,6 @@ services:
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "false"
       KC_LOG_LEVEL: ${KEYCLOAK_LOG_LEVEL:-warn}
-      JAVA_OPTS_APPEND: -XX:+UseParallelGC -XX:MaxRAMPercentage=70 -Djava.security.egd=file:/dev/urandom
     ports:
       - "8180:8080"
     volumes:

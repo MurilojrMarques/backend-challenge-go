@@ -76,6 +76,8 @@ func TestFaultConsumerCrashAfterCommitIsIdempotent(t *testing.T) {
 	defer cancel()
 
 	w := openWallet(t, "100.00")
+	dlqBefore, err := testutil.Depth(ctx, env.sqs, env.dlq)
+	require.NoError(t, err)
 	bet := testutil.NewWager(w.id, w.player, externalID("crash"), "BET", "30.00")
 	messageID := "msg-" + bet.ExternalTransactionID
 	require.NoError(t, testutil.Send(ctx, env.sqs, env.wagerQueue, w.id, messageID, bet.Envelope(messageID)))
@@ -104,9 +106,9 @@ func TestFaultConsumerCrashAfterCommitIsIdempotent(t *testing.T) {
 	res, err = env.internalAt(2).Get(ctx, "/wallets/"+w.id+"/ledger")
 	require.NoError(t, err)
 	assert.Len(t, res.List("entries"), 2)
-	dlq, err := testutil.Depth(ctx, env.sqs, env.dlq)
+	dlqAfter, err := testutil.Depth(ctx, env.sqs, env.dlq)
 	require.NoError(t, err)
-	assert.Equal(t, 0, dlq)
+	assert.Equal(t, dlqBefore, dlqAfter, "nothing was dead-lettered by the crash and the replay")
 }
 
 func TestFaultOutboxCrashAfterPublishNeverDuplicates(t *testing.T) {
@@ -146,7 +148,7 @@ func TestFaultOutboxCrashAfterPublishNeverDuplicates(t *testing.T) {
 	assert.Equal(t, 1, walletEvents["WalletBalanceChanged"], "balance event for the wallet")
 }
 
-func TestRestartPreservesIdempotencyAndPendencies(t *testing.T) {
+func TestFaultRestartPreservesIdempotencyAndPendencies(t *testing.T) {
 	requireFaultMode(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
