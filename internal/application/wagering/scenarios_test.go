@@ -3,6 +3,7 @@ package wagering_test
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -23,15 +24,19 @@ func TestTwoBetsOfEightyOnOneHundred(t *testing.T) {
 	w := h.OpenWallet(t, "100.00")
 
 	results := make([]wagering.Result, 2)
+	errs := make([]error, 2)
 	var wg sync.WaitGroup
 	for i, id := range []string{"bet-1", "bet-2"} {
 		wg.Add(1)
 		go func(i int, id string) {
 			defer wg.Done()
-			results[i] = h.Submit(t, h.Command(w, "BET", id, "80.00"))
+			results[i], errs[i] = h.Wagers.Submit(h.Ctx, h.ProviderA, h.Command(w, "BET", id, "80.00"))
 		}(i, id)
 	}
 	wg.Wait()
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
 
 	statuses := map[wager.Status]int{}
 	for _, r := range results {
@@ -63,15 +68,19 @@ func TestSameBetFiftyTimesInParallel(t *testing.T) {
 	cmd := h.Command(w, "BET", "bet-1", "25.00")
 
 	results := make([]wagering.Result, 50)
+	errs := make([]error, 50)
 	var wg sync.WaitGroup
 	for i := range results {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			results[i] = h.Submit(t, cmd)
+			results[i], errs[i] = h.Wagers.Submit(h.Ctx, h.ProviderA, cmd)
 		}(i)
 	}
 	wg.Wait()
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
 
 	replays := 0
 	for _, r := range results {
@@ -96,17 +105,24 @@ func TestIndependentWalletsProgressInParallel(t *testing.T) {
 		views[i] = h.OpenWallet(t, "100.00")
 	}
 
+	errs := make([]error, len(views))
 	var wg sync.WaitGroup
-	for _, w := range views {
+	for i, w := range views {
 		wg.Add(1)
-		go func(w wallets.View) {
+		go func(i int, w wallets.View) {
 			defer wg.Done()
 			for _, id := range []string{"a", "b", "c"} {
-				h.Submit(t, h.Command(w, "BET", w.ID.String()+id, "10.00"))
+				if _, err := h.Wagers.Submit(h.Ctx, h.ProviderA, h.Command(w, "BET", w.ID.String()+id, "10.00")); err != nil {
+					errs[i] = err
+					return
+				}
 			}
-		}(w)
+		}(i, w)
 	}
 	wg.Wait()
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
 
 	for _, w := range views {
 		assert.True(t, brl("70.00").Equal(h.Balance(t, w.ID)))
@@ -339,4 +355,51 @@ func TestConsumeBusinessRejectionIsTerminal(t *testing.T) {
 	inbox, ok := h.Store.Inbox("c", "m")
 	require.True(t, ok)
 	assert.True(t, inbox.Completed())
+}
+
+func TestPendingReferenceFailsPermanentlyOnIntegrityErrors(t *testing.T) {
+	t.Parallel()
+	h := apptest.NewHarness(t)
+	w := h.OpenWallet(t, "100.00")
+
+	pending := h.Submit(t, h.Command(w, "ROLLBACK", "rb-1", "30.00", apptest.WithReference("bet-1")))
+	require.Equal(t, wager.PendingReference, pending.Status)
+
+	h.Clock.Advance(apptest.DefaultOptions.ReferenceBackoff.Max)
+	h.Store.FailCommit(application.ErrIntegrity)
+	processed, err := h.Wagers.ResolveDue(h.Ctx, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, processed)
+
+	snap := h.Store.Wager(pending.TransactionID)
+	assert.Equal(t, wager.Failed, snap.Status)
+	assert.Equal(t, wager.PermanentFailure, snap.FailureCode)
+	assert.Equal(t, 1, h.Metrics.Concluded(wager.Rollback, wager.Failed, wager.PermanentFailure))
+	assert.True(t, brl("100.00").Equal(h.Balance(t, w.ID)))
+}
+
+func TestTimestampsFollowLockOrderNotTheClock(t *testing.T) {
+	t.Parallel()
+	h := apptest.NewHarness(t)
+	w := h.OpenWallet(t, "100.00")
+
+	first := h.Submit(t, h.Command(w, "BET", "bet-1", "10.00"))
+	h.Clock.Advance(-time.Hour)
+	second := h.Submit(t, h.Command(w, "BET", "bet-2", "10.00"))
+
+	entries := h.Store.LedgerEntries(w.ID)
+	require.Len(t, entries, 3)
+	assert.True(t, entries[2].CreatedAt().After(entries[1].CreatedAt()), "ledger order follows the wallet lock even when the clock goes backwards")
+
+	var latest time.Time
+	for _, rec := range h.Store.OutboxByType(event.WalletBalanceChanged) {
+		if rec.OccurredAt.After(latest) {
+			latest = rec.OccurredAt
+		}
+	}
+	assert.Equal(t, entries[2].CreatedAt(), latest, "the newest balance event carries the newest ledger timestamp")
+	assert.True(t, h.Store.Wager(second.TransactionID).CreatedAt.After(h.Store.Wager(first.TransactionID).CreatedAt))
+
+	_, err := h.Wallets.Get(h.Ctx, h.Internal, w.ID)
+	require.NoError(t, err, "the wallet still rehydrates")
 }

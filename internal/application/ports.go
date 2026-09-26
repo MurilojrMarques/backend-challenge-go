@@ -122,6 +122,7 @@ func (NopMetrics) OutboxLag(time.Duration, int)                               {}
 
 type Message struct {
 	ID            string
+	GroupID       string
 	ReceiptHandle string
 	Body          []byte
 	ReceiveCount  int

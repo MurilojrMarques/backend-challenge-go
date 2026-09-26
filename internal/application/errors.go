@@ -26,4 +26,5 @@ var (
 	ErrForbidden              = errors.New("app: forbidden")
 	ErrInvalidInput           = errors.New("app: invalid input")
 	ErrMessageInFlight        = errors.New("app: message is being processed by another consumer")
+	ErrWalletExists           = fmt.Errorf("%w: a wallet already exists for this player and currency", ErrConflict)
 )

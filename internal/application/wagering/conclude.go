@@ -25,12 +25,14 @@ type conclusion struct {
 
 func (s *Service) conclude(ctx context.Context, r application.Repos, c conclusion) (Result, error) {
 	switch c.verdict.Decision {
+	case wager.Proceed:
+		return s.process(ctx, r, c)
 	case wager.Await:
 		return s.await(ctx, r, c)
 	case wager.Reject:
 		return s.reject(ctx, r, c, c.verdict.Code)
 	default:
-		return s.process(ctx, r, c)
+		return Result{}, fmt.Errorf("%w: no decision for transaction %s", application.ErrIntegrity, c.tx.ID())
 	}
 }
 
@@ -55,7 +57,6 @@ func (s *Service) await(ctx context.Context, r application.Repos, c conclusion) 
 			return Result{}, err
 		}
 	}
-	s.metrics.WagerConcluded(c.tx.Kind(), wager.PendingReference, "")
 	return resultOf(c.tx, false), nil
 }
 
@@ -77,7 +78,6 @@ func (s *Service) reject(ctx context.Context, r application.Repos, c conclusion,
 	if err := r.Outbox.Append(ctx, rejected); err != nil {
 		return Result{}, err
 	}
-	s.metrics.WagerConcluded(c.tx.Kind(), wager.Rejected, code)
 	return resultOf(c.tx, false), nil
 }
 
@@ -140,7 +140,6 @@ func (s *Service) process(ctx context.Context, r application.Repos, c conclusion
 		return Result{}, err
 	}
 
-	s.metrics.WagerConcluded(c.tx.Kind(), wager.Processed, "")
 	return resultOf(c.tx, false), nil
 }
 

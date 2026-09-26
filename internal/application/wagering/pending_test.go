@@ -23,3 +23,12 @@ func TestBackoff(t *testing.T) {
 
 	assert.Equal(t, time.Minute, wagering.Backoff{Max: time.Minute}.Next(3), "zero base falls back to max")
 }
+
+func TestBackoffWithoutMaxKeepsDoubling(t *testing.T) {
+	t.Parallel()
+	b := wagering.Backoff{Base: time.Second}
+	assert.Equal(t, time.Second, b.Next(1))
+	assert.Equal(t, 2*time.Second, b.Next(2))
+	assert.Equal(t, 8*time.Second, b.Next(4))
+	assert.Positive(t, b.Next(100), "doubling stops before overflowing")
+}

@@ -31,6 +31,7 @@ func NewService(uow application.UnitOfWork, clock application.Clock, metrics app
 
 type Result struct {
 	TransactionID    uuid.UUID
+	Kind             wager.Kind
 	Status           wager.Status
 	Balance          money.Money
 	HasBalance       bool
@@ -43,12 +44,21 @@ func resultOf(tx *wager.Transaction, replay bool) Result {
 	code, _ := tx.FailureCode()
 	return Result{
 		TransactionID:    tx.ID(),
+		Kind:             tx.Kind(),
 		Status:           tx.Status(),
 		Balance:          balance,
 		HasBalance:       hasBalance,
 		FailureCode:      code,
 		IdempotentReplay: replay,
 	}
+}
+
+func (s *Service) observe(res Result, source string) {
+	if res.IdempotentReplay {
+		s.metrics.IdempotentReplay(source)
+		return
+	}
+	s.metrics.WagerConcluded(res.Kind, res.Status, res.FailureCode)
 }
 
 type View struct {
@@ -103,14 +113,18 @@ func (s *Service) Submit(ctx context.Context, principal application.Principal, c
 
 	var result Result
 	err = s.uow.Do(ctx, application.TxOptions{}, func(ctx context.Context, r application.Repos) error {
-		out, err := s.run(ctx, r, p, "http")
+		out, err := s.run(ctx, r, p)
 		if err != nil {
 			return err
 		}
 		result = out
 		return nil
 	})
-	return result, err
+	if err != nil {
+		return Result{}, err
+	}
+	s.observe(result, "http")
+	return result, nil
 }
 
 func (s *Service) GetByID(ctx context.Context, principal application.Principal, id uuid.UUID) (View, error) {

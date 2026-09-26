@@ -17,18 +17,19 @@ type Backoff struct {
 }
 
 func (b Backoff) Next(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
 	if b.Base <= 0 {
 		return b.Max
 	}
 	d := b.Base
 	for i := 1; i < attempt; i++ {
-		d *= 2
-		if d <= 0 || d >= b.Max {
+		if b.Max > 0 && d >= b.Max {
 			return b.Max
 		}
+		doubled := d * 2
+		if doubled <= d {
+			break
+		}
+		d = doubled
 	}
 	if b.Max > 0 && d > b.Max {
 		return b.Max
@@ -53,12 +54,12 @@ func (s *Service) ResolveDue(ctx context.Context, limit int) (int, error) {
 
 func (s *Service) resolveNext(ctx context.Context) (bool, error) {
 	var (
-		found bool
-		txID  uuid.UUID
+		found  bool
+		txID   uuid.UUID
+		result Result
 	)
 	err := s.uow.Do(ctx, application.TxOptions{}, func(ctx context.Context, r application.Repos) error {
-		now := s.clock.Now().UTC()
-		due, err := r.Wagers.ListDuePendingReferences(ctx, now, 1)
+		due, err := r.Wagers.ListDuePendingReferences(ctx, s.clock.Now().UTC(), 1)
 		if err != nil || len(due) == 0 {
 			return err
 		}
@@ -74,25 +75,29 @@ func (s *Service) resolveNext(ctx context.Context) (bool, error) {
 		if err != nil {
 			return err
 		}
-		_, err = s.conclude(ctx, r, conclusion{
+		result, err = s.conclude(ctx, r, conclusion{
 			tx:            tx,
 			wallet:        w,
 			ref:           ref,
 			verdict:       wager.Evaluate(tx, w, ref),
-			now:           now,
+			now:           after(s.clock.Now().UTC(), tx.UpdatedAt(), w.UpdatedAt()),
 			correlationID: tx.ID().String(),
 			insert:        false,
 		})
 		return err
 	})
-	if err != nil && found && isPermanent(err) {
-		s.logger.ErrorContext(ctx, "pending reference resolution failed permanently", "transactionId", txID, "err", err)
-		if failErr := s.failPermanently(ctx, txID); failErr != nil {
-			return found, failErr
+	switch {
+	case err == nil:
+		if found && result.Status.Terminal() {
+			s.observe(result, "pending")
 		}
 		return found, nil
+	case found && isPermanent(err):
+		s.logger.ErrorContext(ctx, "pending reference resolution failed permanently", "transactionId", txID, "err", err)
+		return found, s.failPermanently(ctx, txID)
+	default:
+		return found, err
 	}
-	return found, err
 }
 
 func isPermanent(err error) bool {
@@ -102,7 +107,8 @@ func isPermanent(err error) bool {
 }
 
 func (s *Service) failPermanently(ctx context.Context, id uuid.UUID) error {
-	return s.uow.Do(ctx, application.TxOptions{}, func(ctx context.Context, r application.Repos) error {
+	var failed Result
+	err := s.uow.Do(ctx, application.TxOptions{}, func(ctx context.Context, r application.Repos) error {
 		tx, err := r.Wagers.Get(ctx, id)
 		if err != nil {
 			return err
@@ -116,7 +122,11 @@ func (s *Service) failPermanently(ctx context.Context, id uuid.UUID) error {
 		if err := r.Wagers.Update(ctx, tx, time.Time{}); err != nil {
 			return err
 		}
-		s.metrics.WagerConcluded(tx.Kind(), wager.Failed, wager.PermanentFailure)
+		failed = resultOf(tx, false)
 		return nil
 	})
+	if err == nil && failed.Status == wager.Failed {
+		s.observe(failed, "pending")
+	}
+	return err
 }

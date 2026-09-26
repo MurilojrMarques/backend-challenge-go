@@ -17,14 +17,15 @@ import (
 )
 
 type MemStore struct {
-	mu       sync.Mutex
-	wallets  map[uuid.UUID]wallet.Snapshot
-	wagers   map[uuid.UUID]wager.Snapshot
-	schedule map[uuid.UUID]time.Time
-	ledger   []wallet.LedgerEntry
-	inbox    map[string]application.InboxRecord
-	outbox   map[uuid.UUID]application.OutboxRecord
-	failNext error
+	mu         sync.Mutex
+	wallets    map[uuid.UUID]wallet.Snapshot
+	wagers     map[uuid.UUID]wager.Snapshot
+	schedule   map[uuid.UUID]time.Time
+	ledger     []wallet.LedgerEntry
+	inbox      map[string]application.InboxRecord
+	outbox     map[uuid.UUID]application.OutboxRecord
+	failNext   error
+	failCommit error
 }
 
 func NewMemStore() *MemStore {
@@ -72,6 +73,11 @@ func (s *MemStore) Do(ctx context.Context, _ application.TxOptions, fn func(cont
 	if err := fn(ctx, repos); err != nil {
 		return err
 	}
+	if s.failCommit != nil {
+		err := s.failCommit
+		s.failCommit = nil
+		return err
+	}
 	s.wallets, s.wagers, s.schedule, s.ledger, s.inbox, s.outbox =
 		tx.wallets, tx.wagers, tx.schedule, tx.ledger, tx.inbox, tx.outbox
 	return nil
@@ -81,6 +87,12 @@ func (s *MemStore) FailNext(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failNext = err
+}
+
+func (s *MemStore) FailCommit(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failCommit = err
 }
 
 func (s *MemStore) Wallet(id uuid.UUID) wallet.Snapshot {
@@ -173,7 +185,7 @@ func (r *memWallets) Create(_ context.Context, w *wallet.Wallet) error {
 	}
 	for _, other := range r.tx.wallets {
 		if other.PlayerID == s.PlayerID && other.Balance.Currency() == s.Balance.Currency() {
-			return conflict("wallets_player_currency_key")
+			return fmt.Errorf("%w: %w", application.ErrWalletExists, conflict("wallets_player_currency_key"))
 		}
 	}
 	r.tx.wallets[s.ID] = s

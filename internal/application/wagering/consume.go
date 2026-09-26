@@ -46,7 +46,6 @@ func (s *Service) Consume(ctx context.Context, msg InboundMessage) (Result, erro
 				if err != nil {
 					return err
 				}
-				s.metrics.IdempotentReplay("sqs")
 				result = resultOf(tx, true)
 				return nil
 			}
@@ -67,12 +66,16 @@ func (s *Service) Consume(ctx context.Context, msg InboundMessage) (Result, erro
 			return err
 		}
 
-		out, err := s.run(ctx, r, p, "sqs")
+		out, err := s.run(ctx, r, p)
 		if err != nil {
 			return err
 		}
 		result = out
 		return r.Inbox.Complete(ctx, msg.ConsumerName, msg.MessageID, out.TransactionID, now)
 	})
-	return result, err
+	if err != nil {
+		return Result{}, err
+	}
+	s.observe(result, "sqs")
+	return result, nil
 }
