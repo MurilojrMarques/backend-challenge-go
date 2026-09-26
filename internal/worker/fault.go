@@ -3,11 +3,14 @@ package worker
 import (
 	"log/slog"
 	"os"
+
+	"github.com/MurilojrMarques/backend-challenge-go/internal/config"
 )
 
 const (
-	FaultConsumerAfterCommit = "consumer.after_commit_before_ack"
-	FaultOutboxAfterPublish  = "outbox.after_publish_before_mark"
+	FaultConsumerAfterCommit = config.FaultConsumerAfterCommit
+	FaultOutboxAfterPublish  = config.FaultOutboxAfterPublish
+	faultExitCode            = 3
 )
 
 type Fault struct {
@@ -24,6 +27,6 @@ func (f *Fault) Trigger(point string) {
 	if f == nil || f.point == "" || f.point != point {
 		return
 	}
-	f.logger.Error("fault injected, terminating process", "point", point)
-	f.exit(1)
+	f.logger.Error("fault injected, terminating process", "point", point, "exitCode", faultExitCode)
+	f.exit(faultExitCode)
 }

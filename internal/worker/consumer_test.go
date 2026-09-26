@@ -230,3 +230,75 @@ func TestConsumerFaultInjection(t *testing.T) {
 	assert.Equal(t, 1, exited, "fault fires after the commit")
 	assert.True(t, apptest.BRL("75.00").Equal(h.Balance(t, w.ID)), "the commit happened before the crash")
 }
+
+func inGroup(m application.Message, group string) application.Message {
+	m.GroupID = group
+	return m
+}
+
+func TestConsumerHoldsBackLaterMessagesOfAFailedGroup(t *testing.T) {
+	t.Parallel()
+	h := apptest.NewHarness(t)
+	q := newFakeQueue()
+	c := newConsumer(t, h, q)
+	w := h.OpenWallet(t, "100.00")
+
+	h.Store.FailNext(application.ErrUnavailable)
+	q.enqueue(
+		inGroup(message("m1", envelope(t, w, "BET", "b1", "10.00"), 1), w.ID.String()),
+		inGroup(message("m2", envelope(t, w, "BET", "b2", "10.00"), 1), w.ID.String()),
+		inGroup(message("m3", envelope(t, w, "BET", "b3", "10.00"), 1), "another-group"),
+	)
+	_, err := c.tick(context.Background())
+	require.NoError(t, err)
+
+	assert.False(t, q.deleted["rh-m1"], "the failed message is retried")
+	assert.False(t, q.deleted["rh-m2"], "a later message of the same group waits for the failed one")
+	assert.Equal(t, q.visibility["rh-m1"], q.visibility["rh-m2"], "both come back together, in order")
+	assert.True(t, q.deleted["rh-m3"], "other groups keep flowing")
+	assert.Equal(t, 1, h.Metrics.Count("message/retry"))
+	assert.Equal(t, 1, h.Metrics.Count("message/held_back"))
+	assert.True(t, apptest.BRL("90.00").Equal(h.Balance(t, w.ID)))
+}
+
+func TestConsumerReturnsMessagesWhenTheBatchBudgetIsSpent(t *testing.T) {
+	t.Parallel()
+	h := apptest.NewHarness(t)
+	q := newFakeQueue()
+	c := newConsumer(t, h, q)
+	w := h.OpenWallet(t, "100.00")
+
+	base := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	calls := 0
+	c.now = func() time.Time {
+		calls++
+		return base.Add(time.Duration(calls-1) * 20 * time.Second)
+	}
+
+	q.enqueue(message("m1", envelope(t, w, "BET", "b1", "10.00"), 1), message("m2", envelope(t, w, "BET", "b2", "10.00"), 1))
+	busy, err := c.tick(context.Background())
+	require.NoError(t, err)
+	assert.True(t, busy)
+	assert.True(t, q.deleted["rh-m1"], "handled within the budget")
+	assert.False(t, q.deleted["rh-m2"], "no budget left for the second message")
+	assert.Equal(t, time.Duration(0), q.visibility["rh-m2"], "returned to the queue at once instead of waiting for the visibility timeout")
+	assert.Equal(t, 1, h.Metrics.Count("message/returned"))
+	assert.True(t, apptest.BRL("90.00").Equal(h.Balance(t, w.ID)))
+}
+
+func TestConsumerReturnsMessagesOnShutdown(t *testing.T) {
+	t.Parallel()
+	h := apptest.NewHarness(t)
+	q := newFakeQueue()
+	c := newConsumer(t, h, q)
+	w := h.OpenWallet(t, "100.00")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	q.enqueue(message("m1", envelope(t, w, "BET", "b1", "25.00"), 1))
+	_, err := c.tick(ctx)
+	require.NoError(t, err)
+	_, reset := q.visibility["rh-m1"]
+	assert.True(t, reset, "visibility reset so another instance picks the message up immediately")
+	assert.Equal(t, time.Duration(0), q.visibility["rh-m1"])
+}

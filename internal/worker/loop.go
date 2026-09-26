@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"time"
 )
 
@@ -38,7 +39,7 @@ func (l *Loop) run(ctx context.Context) {
 	defer close(l.done)
 	errorBackoff := l.interval
 	for {
-		busy, err := l.tick(ctx)
+		busy, err := l.safeTick(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -63,6 +64,16 @@ func (l *Loop) run(ctx context.Context) {
 		case <-time.After(delay):
 		}
 	}
+}
+
+func (l *Loop) safeTick(ctx context.Context) (busy bool, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			l.logger.ErrorContext(ctx, "worker tick panicked", "panic", rec, "stack", string(debug.Stack()))
+			busy, err = false, fmt.Errorf("worker %s panicked: %v", l.name, rec)
+		}
+	}()
+	return l.tick(ctx)
 }
 
 func (l *Loop) Stop(ctx context.Context) error {

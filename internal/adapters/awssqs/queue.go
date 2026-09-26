@@ -37,11 +37,14 @@ func NewQueue(client *sqs.Client, cfg config.SQS) *Queue {
 
 func (q *Queue) Receive(ctx context.Context) ([]application.Message, error) {
 	out, err := q.client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
-		QueueUrl:                    aws.String(q.url),
-		MaxNumberOfMessages:         q.maxMessages,
-		WaitTimeSeconds:             int32(q.waitTime / time.Second),
-		VisibilityTimeout:           int32(q.visibility / time.Second),
-		MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameApproximateReceiveCount},
+		QueueUrl:            aws.String(q.url),
+		MaxNumberOfMessages: q.maxMessages,
+		WaitTimeSeconds:     int32(q.waitTime / time.Second),
+		VisibilityTimeout:   int32(q.visibility / time.Second),
+		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+			types.MessageSystemAttributeNameApproximateReceiveCount,
+			types.MessageSystemAttributeNameMessageGroupId,
+		},
 	})
 	if err != nil {
 		return nil, translate("receive", err)
@@ -51,6 +54,7 @@ func (q *Queue) Receive(ctx context.Context) ([]application.Message, error) {
 		count, _ := strconv.Atoi(m.Attributes[string(types.MessageSystemAttributeNameApproximateReceiveCount)])
 		msgs = append(msgs, application.Message{
 			ID:            aws.ToString(m.MessageId),
+			GroupID:       m.Attributes[string(types.MessageSystemAttributeNameMessageGroupId)],
 			ReceiptHandle: aws.ToString(m.ReceiptHandle),
 			Body:          []byte(aws.ToString(m.Body)),
 			ReceiveCount:  count,

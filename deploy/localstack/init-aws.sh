@@ -29,7 +29,7 @@ create_fifo_queue wager-transactions.fifo "{
   \"ContentBasedDeduplication\": \"false\",
   \"VisibilityTimeout\": \"30\",
   \"ReceiveMessageWaitTimeSeconds\": \"20\",
-  \"RedrivePolicy\": \"{\\\"deadLetterTargetArn\\\":\\\"${DLQ_ARN}\\\",\\\"maxReceiveCount\\\":\\\"5\\\"}\"
+  \"RedrivePolicy\": \"{\\\"deadLetterTargetArn\\\":\\\"${DLQ_ARN}\\\",\\\"maxReceiveCount\\\":\\\"20\\\"}\"
 }"
 
 create_fifo_queue wallet-events.fifo '{

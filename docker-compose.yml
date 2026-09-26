@@ -46,6 +46,7 @@ x-app: &app
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -82,7 +83,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -90,6 +91,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.3
+    restart: unless-stopped
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
@@ -113,6 +115,7 @@ services:
 
   localstack:
     image: localstack/localstack:4
+    restart: unless-stopped
     environment:
       SERVICES: sqs,iam,sts
       EAGER_SERVICE_LOADING: "1"
@@ -128,7 +131,13 @@ services:
     volumes:
       - ./deploy/localstack:/etc/localstack/init/ready.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/init/ready | grep -q '\"completed\": true'"]
+      test:
+        - CMD-SHELL
+        - >-
+          out=$$(curl -sf http://localhost:4566/_localstack/init/ready) &&
+          echo "$$out" | grep -q '"completed": true' &&
+          echo "$$out" | grep -q '"state": "SUCCESSFUL"' &&
+          ! echo "$$out" | grep -q '"state": "ERROR"'
       interval: 5s
       timeout: 3s
       retries: 20

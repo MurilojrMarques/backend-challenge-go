@@ -21,7 +21,7 @@ var ConsumerModule = fx.Module("worker.consumer",
 		return NewConsumer(queue, wagers, ConsumerOptions{
 			ConsumerName:      cfg.SQS.ConsumerName,
 			VisibilityTimeout: cfg.SQS.VisibilityTimeout,
-			RetryBackoff:      wagering.Backoff{Base: cfg.Pending.BackoffBase, Max: cfg.SQS.VisibilityTimeout * 8},
+			RetryBackoff:      wagering.Backoff{Base: cfg.SQS.RetryBackoffBase, Max: cfg.SQS.RetryBackoffMax},
 		}, metrics, logger, fault)
 	}),
 	fx.Invoke(func(lc fx.Lifecycle, c *Consumer) {

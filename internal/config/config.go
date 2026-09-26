@@ -4,10 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
+
+const (
+	FaultConsumerAfterCommit = "consumer.after_commit_before_ack"
+	FaultOutboxAfterPublish  = "outbox.after_publish_before_mark"
+)
+
+var FaultPoints = []string{FaultConsumerAfterCommit, FaultOutboxAfterPublish}
 
 type Config struct {
 	HTTP     HTTP
@@ -51,7 +59,11 @@ type SQS struct {
 	WaitTime          time.Duration
 	VisibilityTimeout time.Duration
 	MaxMessages       int
+	RetryBackoffBase  time.Duration
+	RetryBackoffMax   time.Duration
 }
+
+const maxVisibilityTimeout = 12 * time.Hour
 
 type Outbox struct {
 	PollInterval time.Duration
@@ -108,6 +120,8 @@ func Load(getenv Getenv) (Config, error) {
 			WaitTime:          env.seconds("SQS_WAIT_TIME_SECONDS", 20),
 			VisibilityTimeout: env.seconds("SQS_VISIBILITY_TIMEOUT_SECONDS", 30),
 			MaxMessages:       env.int("SQS_MAX_MESSAGES", 10),
+			RetryBackoffBase:  env.duration("SQS_RETRY_BACKOFF_BASE", 2*time.Second),
+			RetryBackoffMax:   env.duration("SQS_RETRY_BACKOFF_MAX", 4*time.Minute),
 		},
 		Outbox: Outbox{
 			PollInterval: env.duration("OUTBOX_POLL_INTERVAL", 500*time.Millisecond),
@@ -201,11 +215,17 @@ func (c Config) Validate() error {
 	if c.SQS.WaitTime < 0 || c.SQS.WaitTime > 20*time.Second {
 		fail("SQS_WAIT_TIME_SECONDS must be between 0 and 20")
 	}
-	if c.SQS.VisibilityTimeout <= 0 {
-		fail("SQS_VISIBILITY_TIMEOUT_SECONDS must be positive")
+	if c.SQS.VisibilityTimeout < time.Second || c.SQS.VisibilityTimeout > maxVisibilityTimeout {
+		fail("SQS_VISIBILITY_TIMEOUT_SECONDS must be between 1 and 43200")
 	}
 	if c.SQS.MaxMessages < 1 || c.SQS.MaxMessages > 10 {
 		fail("SQS_MAX_MESSAGES must be between 1 and 10")
+	}
+	if c.SQS.RetryBackoffBase <= 0 || c.SQS.RetryBackoffMax < c.SQS.RetryBackoffBase || c.SQS.RetryBackoffMax > maxVisibilityTimeout {
+		fail("SQS_RETRY_BACKOFF_BASE must be positive and SQS_RETRY_BACKOFF_MAX between it and 12h")
+	}
+	if c.Fault.InjectPoint != "" && !slices.Contains(FaultPoints, c.Fault.InjectPoint) {
+		fail("FAULT_INJECT must be one of %s", strings.Join(FaultPoints, ", "))
 	}
 	if c.Outbox.BatchSize < 1 {
 		fail("OUTBOX_BATCH_SIZE must be at least 1")

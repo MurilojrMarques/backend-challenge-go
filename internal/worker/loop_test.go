@@ -96,3 +96,17 @@ func TestFaultTrigger(t *testing.T) {
 	nilFault.Trigger(FaultConsumerAfterCommit)
 	NewFault("", discard).Trigger(FaultConsumerAfterCommit)
 }
+
+func TestLoopRecoversFromPanics(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	l := NewLoop("panicky", discard, time.Millisecond, func(context.Context) (bool, error) {
+		if calls.Add(1) == 1 {
+			panic("boom")
+		}
+		return false, nil
+	})
+	require.NoError(t, l.Start(context.Background()))
+	require.Eventually(t, func() bool { return calls.Load() > 1 }, time.Second, time.Millisecond, "the loop keeps ticking after a panic")
+	require.NoError(t, l.Stop(context.Background()))
+}

@@ -130,3 +130,32 @@ func TestLoadReportsAllErrorsAtOnce(t *testing.T) {
 	assert.Contains(t, err.Error(), "OIDC_AUDIENCE")
 	assert.Contains(t, err.Error(), "SQS_MAX_MESSAGES")
 }
+
+func TestMessagingSettings(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(getenv(minimal()))
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Second, cfg.SQS.RetryBackoffBase)
+	assert.Equal(t, 4*time.Minute, cfg.SQS.RetryBackoffMax)
+
+	for name, overrides := range map[string]map[string]string{
+		"unknown fault point":      {"FAULT_INJECT": "consumer.after_commit"},
+		"visibility above 12h":     {"SQS_VISIBILITY_TIMEOUT_SECONDS": "43201"},
+		"retry backoff inverted":   {"SQS_RETRY_BACKOFF_BASE": "10s", "SQS_RETRY_BACKOFF_MAX": "1s"},
+		"retry backoff beyond sqs": {"SQS_RETRY_BACKOFF_MAX": "13h"},
+	} {
+		env := minimal()
+		for k, v := range overrides {
+			env[k] = v
+		}
+		_, err := config.Load(getenv(env))
+		assert.Error(t, err, name)
+	}
+
+	env := minimal()
+	env["FAULT_INJECT"] = config.FaultOutboxAfterPublish
+	cfg, err = config.Load(getenv(env))
+	require.NoError(t, err)
+	assert.Equal(t, config.FaultOutboxAfterPublish, cfg.Fault.InjectPoint)
+}

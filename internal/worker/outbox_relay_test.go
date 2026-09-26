@@ -222,3 +222,57 @@ func TestOutboxRelayTwoPublishersNeverDuplicate(t *testing.T) {
 	}
 	assert.Len(t, ids, 10, "5 wallets x 2 events, each exactly once")
 }
+
+type cancellingPublisher struct {
+	inner  *fakePublisher
+	cancel context.CancelFunc
+}
+
+func (p *cancellingPublisher) Publish(ctx context.Context, rec application.OutboxRecord) error {
+	err := p.inner.Publish(ctx, rec)
+	p.cancel()
+	return err
+}
+
+func TestOutboxRelayReleasesClaimedEventsOnShutdown(t *testing.T) {
+	t.Parallel()
+	h := apptest.NewHarness(t)
+	h.OpenWallet(t, "100.00")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inner := &fakePublisher{}
+	stopping := newRelay(h, &cancellingPublisher{inner: inner, cancel: cancel}, "relay-stopping", nil)
+	busy, err := stopping.tick(ctx)
+	require.NoError(t, err)
+	assert.True(t, busy)
+	require.Len(t, inner.published, 1, "shutdown began right after the first publish")
+
+	survivor := &fakePublisher{}
+	other := newRelay(h, survivor, "relay-2", nil)
+	_, err = other.tick(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, survivor.published, 1, "the abandoned event is claimable at once, without waiting for the lease")
+}
+
+func TestOutboxRelaySkipsEventsWhoseLeaseExpired(t *testing.T) {
+	t.Parallel()
+	h := apptest.NewHarness(t)
+	h.OpenWallet(t, "100.00")
+	pub := &fakePublisher{}
+	relay := newRelay(h, pub, "relay-slow", nil)
+
+	var claimed []application.OutboxRecord
+	require.NoError(t, h.Store.Do(context.Background(), application.TxOptions{}, func(ctx context.Context, r application.Repos) error {
+		var err error
+		claimed, err = r.Outbox.Claim(ctx, "relay-slow", h.Clock.Now(), time.Second, 10)
+		return err
+	}))
+	require.Len(t, claimed, 2)
+
+	h.Clock.Advance(2 * time.Second)
+	for _, rec := range claimed {
+		relay.publishOne(context.Background(), rec)
+	}
+	assert.Empty(t, pub.published, "a publisher never sends an event whose lease it no longer holds")
+}
