@@ -26,7 +26,7 @@ func correlationFrom(ctx context.Context) string {
 func correlation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(CorrelationHeader)
-		if id == "" || len(id) > 128 {
+		if id == "" || len(id) > 128 || !cleanText(id) {
 			id = uuid.Must(uuid.NewV7()).String()
 		}
 		w.Header().Set(CorrelationHeader, id)
@@ -34,7 +34,7 @@ func correlation(next http.Handler) http.Handler {
 	})
 }
 
-func requestLogger(base *slog.Logger) func(http.Handler) http.Handler {
+func requestTelemetry(base *slog.Logger, observer RequestObserver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -43,12 +43,22 @@ func requestLogger(base *slog.Logger) func(http.Handler) http.Handler {
 
 			next.ServeHTTP(ww, r.WithContext(withLogger(r.Context(), l)))
 
+			elapsed := time.Since(start)
+			route := chi.RouteContext(r.Context()).RoutePattern()
+			status := ww.Status()
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if observer != nil {
+				observer.ObserveRequest(r.Method, route, status, elapsed)
+			}
+
 			attrs := []any{
 				"method", r.Method,
-				"route", chi.RouteContext(r.Context()).RoutePattern(),
-				"status", ww.Status(),
+				"route", route,
+				"status", status,
 				"bytes", ww.BytesWritten(),
-				"durationMs", time.Since(start).Milliseconds(),
+				"durationMs", elapsed.Milliseconds(),
 			}
 			if p, ok := application.PrincipalFrom(r.Context()); ok {
 				attrs = append(attrs, "subject", p.Subject, "role", string(p.Role))
@@ -57,9 +67,9 @@ func requestLogger(base *slog.Logger) func(http.Handler) http.Handler {
 				}
 			}
 			switch {
-			case ww.Status() >= 500:
+			case status >= 500:
 				l.ErrorContext(r.Context(), "http request", attrs...)
-			case ww.Status() >= 400:
+			case status >= 400:
 				l.WarnContext(r.Context(), "http request", attrs...)
 			default:
 				l.InfoContext(r.Context(), "http request", attrs...)

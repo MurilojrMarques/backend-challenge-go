@@ -12,13 +12,15 @@ import (
 )
 
 type Server struct {
-	http   *http.Server
-	logger *slog.Logger
-	addr   net.Addr
+	http            *http.Server
+	logger          *slog.Logger
+	addr            net.Addr
+	shutdownTimeout time.Duration
 }
 
 func NewServer(cfg config.HTTP, handler http.Handler, logger *slog.Logger) *Server {
 	return &Server{
+		shutdownTimeout: cfg.ShutdownTimeout,
 		http: &http.Server{
 			Addr:              cfg.Addr,
 			Handler:           handler,
@@ -49,6 +51,11 @@ func (s *Server) Start(_ context.Context) error {
 }
 
 func (s *Server) Stop(ctx context.Context) error {
+	if s.shutdownTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.shutdownTimeout)
+		defer cancel()
+	}
 	s.http.SetKeepAlivesEnabled(false)
 	if err := s.http.Shutdown(ctx); err != nil {
 		closeErr := s.http.Close()

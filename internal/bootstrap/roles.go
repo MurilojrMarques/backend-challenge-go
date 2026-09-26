@@ -81,3 +81,12 @@ func joinRoles(roles []Role) string {
 	}
 	return strings.Join(names, ", ")
 }
+
+func (r Roles) Any(roles ...Role) bool {
+	for _, role := range roles {
+		if r.Has(role) {
+			return true
+		}
+	}
+	return false
+}

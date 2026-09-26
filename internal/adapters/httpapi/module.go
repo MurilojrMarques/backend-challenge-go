@@ -25,6 +25,7 @@ type Params struct {
 	Wagers   *wagering.Service           `optional:"true"`
 	Health   []application.HealthChecker `group:"health"`
 	Metrics  http.Handler                `name:"metrics" optional:"true"`
+	Observer RequestObserver             `optional:"true"`
 }
 
 var Module = fx.Module("httpapi",
@@ -60,6 +61,7 @@ func newRouter(p Params) (http.Handler, error) {
 		Wagers:   p.Wagers,
 		Health:   p.Health,
 		Metrics:  p.Metrics,
+		Observer: p.Observer,
 	})
 }
 

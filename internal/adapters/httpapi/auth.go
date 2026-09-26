@@ -21,9 +21,15 @@ const (
 	RoleProvider = "wallet-provider"
 )
 
+const (
+	oidcClientTimeout = 5 * time.Second
+	expiryLeeway      = 30 * time.Second
+)
+
 var (
 	ErrUnauthenticated = errors.New("httpapi: unauthenticated")
 	ErrAuthNotReady    = errors.New("httpapi: authenticator not ready")
+	errMissingToken    = errors.New("httpapi: missing bearer token")
 )
 
 type Claims struct {
@@ -65,11 +71,15 @@ func NewOIDCVerifier(cfg config.OIDC) *OIDCVerifier {
 }
 
 func (v *OIDCVerifier) Start(ctx context.Context) error {
+	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: oidcClientTimeout})
 	backoff := time.Second
 	for {
 		provider, err := oidc.NewProvider(ctx, v.cfg.Issuer)
 		if err == nil {
-			v.verifier.Store(provider.Verifier(&oidc.Config{ClientID: v.cfg.Audience}))
+			v.verifier.Store(provider.Verifier(&oidc.Config{
+				ClientID: v.cfg.Audience,
+				Now:      func() time.Time { return time.Now().Add(-expiryLeeway) },
+			}))
 			return nil
 		}
 		select {
@@ -99,11 +109,14 @@ func (v *OIDCVerifier) Verify(ctx context.Context, rawToken string) (Claims, err
 	}
 	token, err := verifier.Verify(ctx, rawToken)
 	if err != nil {
-		return Claims{}, fmt.Errorf("%w: %v", ErrUnauthenticated, err)
+		if strings.Contains(err.Error(), "fetching keys") {
+			return Claims{}, fmt.Errorf("%w: %w", ErrAuthNotReady, err)
+		}
+		return Claims{}, fmt.Errorf("%w: %w", ErrUnauthenticated, err)
 	}
 	var raw rawClaims
 	if err := token.Claims(&raw); err != nil {
-		return Claims{}, fmt.Errorf("%w: unreadable claims: %v", ErrUnauthenticated, err)
+		return Claims{}, fmt.Errorf("%w: unreadable claims: %w", ErrUnauthenticated, err)
 	}
 	return Claims{
 		Subject:    raw.Subject,
@@ -118,7 +131,7 @@ func Authenticate(verifier TokenVerifier) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw, ok := bearerToken(r.Header.Get("Authorization"))
 			if !ok {
-				writeError(w, r, fmt.Errorf("%w: missing bearer token", ErrUnauthenticated))
+				writeError(w, r, fmt.Errorf("%w: %w", ErrUnauthenticated, errMissingToken))
 				return
 			}
 			claims, err := verifier.Verify(r.Context(), raw)

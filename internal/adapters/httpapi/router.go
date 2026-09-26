@@ -4,9 +4,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application"
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application/wagering"
@@ -34,6 +36,10 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
+type RequestObserver interface {
+	ObserveRequest(method, route string, status int, elapsed time.Duration)
+}
+
 type Deps struct {
 	Options  Options
 	Logger   *slog.Logger
@@ -42,6 +48,7 @@ type Deps struct {
 	Wagers   *wagering.Service
 	Health   []application.HealthChecker
 	Metrics  http.Handler
+	Observer RequestObserver
 }
 
 func (d Deps) validate() error {
@@ -57,6 +64,19 @@ func (d Deps) validate() error {
 	return nil
 }
 
+func allowedMethods(mux chi.Router, path string) []string {
+	var out []string
+	for _, m := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions} {
+		if mux.Match(chi.NewRouteContext(), m, path) {
+			out = append(out, m)
+			if m == http.MethodGet {
+				out = append(out, http.MethodHead)
+			}
+		}
+	}
+	return out
+}
+
 func NewRouter(d Deps) (http.Handler, error) {
 	if err := d.validate(); err != nil {
 		return nil, err
@@ -64,13 +84,16 @@ func NewRouter(d Deps) (http.Handler, error) {
 	opts := d.Options.withDefaults()
 
 	r := chi.NewRouter()
-	r.Use(correlation, requestLogger(d.Logger), recoverer, requestTimeout(opts.RequestTimeout))
+	r.Use(correlation, requestTelemetry(d.Logger, d.Observer), recoverer, requestTimeout(opts.RequestTimeout), middleware.GetHead)
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, application.ErrNotFound)
 	})
-	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusMethodNotAllowed, ErrorBody{Code: "METHOD_NOT_ALLOWED", Message: "method not allowed", CorrelationID: correlationFrom(r.Context())})
+	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
+		if allowed := allowedMethods(r, req.URL.Path); len(allowed) > 0 {
+			w.Header().Set("Allow", strings.Join(allowed, ", "))
+		}
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorBody{Code: "METHOD_NOT_ALLOWED", Message: "method not allowed", CorrelationID: correlationFrom(req.Context())})
 	})
 
 	health := &healthHandler{checkers: d.Health}

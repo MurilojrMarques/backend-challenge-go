@@ -33,7 +33,6 @@ func run() int {
 		return 2
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-	slog.SetDefault(logger)
 
 	roles, err := bootstrap.ParseRoles(os.Getenv("APP_ROLES"))
 	if err != nil {
@@ -41,6 +40,7 @@ func run() int {
 		return 2
 	}
 	logger = logger.With("roles", roles.Strings())
+	slog.SetDefault(logger)
 
 	startTimeout, err := durationEnv("APP_START_TIMEOUT", defaultStartTimeout)
 	if err != nil {

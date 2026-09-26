@@ -28,13 +28,14 @@ type apiError struct {
 }
 
 var (
-	errBodyTooLarge = errors.New("httpapi: request body too large")
-	errBadJSON      = errors.New("httpapi: malformed json body")
+	errBodyTooLarge     = errors.New("httpapi: request body too large")
+	errBadJSON          = errors.New("httpapi: malformed json body")
+	errUnsupportedMedia = errors.New("httpapi: unsupported media type")
 )
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any) error {
 	if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(strings.ToLower(ct), "application/json") {
-		return fmt.Errorf("%w: content-type must be application/json", errBadJSON)
+		return errUnsupportedMedia
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	dec := json.NewDecoder(r.Body)
@@ -65,8 +66,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	e := classify(err)
-	if e.status == http.StatusServiceUnavailable {
+	switch e.status {
+	case http.StatusServiceUnavailable:
 		w.Header().Set("Retry-After", "1")
+	case http.StatusUnauthorized:
+		challenge := `Bearer realm="wallet"`
+		if !errors.Is(err, errMissingToken) {
+			challenge += `, error="invalid_token"`
+		}
+		w.Header().Set("WWW-Authenticate", challenge)
 	}
 	if e.status >= 500 {
 		logger(r.Context()).ErrorContext(r.Context(), "request failed", "code", e.code, "err", err)
@@ -75,12 +83,13 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func classify(err error) apiError {
-	var conflict *application.ConflictError
 	switch {
 	case errors.Is(err, ErrUnauthenticated):
 		return apiError{http.StatusUnauthorized, "UNAUTHENTICATED", "missing, invalid or expired credentials"}
 	case errors.Is(err, application.ErrForbidden):
 		return apiError{http.StatusForbidden, "FORBIDDEN", "the authenticated identity cannot perform this operation"}
+	case errors.Is(err, errUnsupportedMedia):
+		return apiError{http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "content-type must be application/json"}
 	case errors.Is(err, errBodyTooLarge):
 		return apiError{http.StatusRequestEntityTooLarge, "BODY_TOO_LARGE", "request body exceeds the allowed size"}
 	case errors.Is(err, errBadJSON):
@@ -108,7 +117,7 @@ func classify(err error) apiError {
 		return apiError{http.StatusConflict, "IDEMPOTENCY_PAYLOAD_CONFLICT", "the Idempotency-Key was already used with a different payload"}
 	case errors.Is(err, wager.ErrIdempotencyKeyMismatch):
 		return apiError{http.StatusConflict, "IDEMPOTENCY_KEY_MISMATCH", "this operation was already registered with another Idempotency-Key"}
-	case errors.As(err, &conflict) && conflict.Constraint == "wallets_player_currency_key":
+	case errors.Is(err, application.ErrWalletExists):
 		return apiError{http.StatusConflict, "WALLET_ALREADY_EXISTS", "a wallet already exists for this player and currency"}
 	case errors.Is(err, application.ErrConflict):
 		return apiError{http.StatusConflict, "CONFLICT", "the request conflicts with the current state"}

@@ -1,8 +1,12 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -18,6 +22,18 @@ type wagerHandler struct {
 	maxBodyBytes int64
 }
 
+func cleanText(s string) bool {
+	return utf8.ValidString(s) && !strings.ContainsFunc(s, unicode.IsControl)
+}
+
+func pathString(r *http.Request, name string) (string, error) {
+	value, err := url.PathUnescape(chi.URLParam(r, name))
+	if err != nil || !cleanText(value) {
+		return "", fmt.Errorf("%w: %s is not a valid path segment", application.ErrInvalidInput, name)
+	}
+	return value, nil
+}
+
 func (h *wagerHandler) submit(w http.ResponseWriter, r *http.Request) {
 	principal, err := principalFrom(r)
 	if err != nil {
@@ -27,6 +43,10 @@ func (h *wagerHandler) submit(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(r.Header.Get(IdempotencyKeyHeader))
 	if key == "" {
 		writeError(w, r, errMissingIdempotencyKey)
+		return
+	}
+	if !cleanText(key) {
+		writeError(w, r, fmt.Errorf("%w: %s must be valid UTF-8 without control characters", application.ErrInvalidInput, IdempotencyKeyHeader))
 		return
 	}
 	var req SubmitWagerRequest
@@ -78,8 +98,16 @@ func (h *wagerHandler) getByExternalID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	providerID := chi.URLParam(r, "providerId")
-	externalID := chi.URLParam(r, "externalTransactionId")
+	providerID, err := pathString(r, "providerId")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	externalID, err := pathString(r, "externalTransactionId")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
 	if len(providerID) > wager.MaxFieldLength || len(externalID) > wager.MaxFieldLength {
 		writeError(w, r, application.ErrNotFound)
 		return
