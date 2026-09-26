@@ -133,10 +133,3 @@ CREATE UNIQUE INDEX wager_transactions_one_reversal_per_reference
 CREATE INDEX wager_transactions_pending_reference_schedule
     ON wager_transactions (next_attempt_at)
     WHERE status = 'PENDING_REFERENCE';
-
-CREATE INDEX wager_transactions_by_wallet
-    ON wager_transactions (wallet_id, created_at);
-
-CREATE INDEX wager_transactions_by_provider_reference
-    ON wager_transactions (provider_id, reference_external_transaction_id)
-    WHERE reference_external_transaction_id IS NOT NULL;

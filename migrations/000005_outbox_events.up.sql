@@ -24,9 +24,9 @@ CREATE TABLE outbox_events (
     CONSTRAINT outbox_published_is_unlocked  CHECK (published_at IS NULL OR locked_by IS NULL),
     CONSTRAINT outbox_payload_is_object      CHECK (jsonb_typeof(payload) = 'object'),
     CONSTRAINT outbox_payload_matches_row    CHECK (
-        (payload ->> 'eventId')::uuid = event_id
-        AND payload ->> 'eventType' = event_type
-        AND (payload ->> 'aggregateId')::uuid = aggregate_id
+        (payload ->> 'eventId')::uuid IS NOT DISTINCT FROM event_id
+        AND payload ->> 'eventType' IS NOT DISTINCT FROM event_type
+        AND (payload ->> 'aggregateId')::uuid IS NOT DISTINCT FROM aggregate_id
     )
 );
 

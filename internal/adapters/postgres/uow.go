@@ -3,12 +3,15 @@ package postgres
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application"
 )
+
+const rollbackTimeout = 5 * time.Second
 
 type UnitOfWork struct {
 	pool *pgxpool.Pool
@@ -24,7 +27,9 @@ func (u *UnitOfWork) Do(ctx context.Context, opts application.TxOptions, fn func
 		return translate(err)
 	}
 	defer func() {
-		if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) && err == nil {
+		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+		defer cancel()
+		if rbErr := tx.Rollback(rbCtx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) && err == nil {
 			err = translate(rbErr)
 		}
 	}()

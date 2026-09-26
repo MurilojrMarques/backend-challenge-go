@@ -21,6 +21,9 @@ func NewPool(ctx context.Context, databaseURL string, connectTimeout time.Durati
 	cfg.HealthCheckPeriod = 30 * time.Second
 	cfg.ConnConfig.RuntimeParams["application_name"] = "wallet-service"
 	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
+	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "10000"
+	cfg.ConnConfig.RuntimeParams["lock_timeout"] = "5000"
+	cfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "15000"
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

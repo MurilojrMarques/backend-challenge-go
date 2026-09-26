@@ -69,7 +69,7 @@ func (r *outboxRepo) Append(ctx context.Context, events ...event.Event) error {
 		}
 		batch.Queue(`
 			INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, occurred_at, created_at, attempts, next_attempt_at)
-			VALUES ($1, $2, $3, $4, $5, now(), 0, $5)`,
+			VALUES ($1, $2, $3, $4, $5, now(), 0, LEAST($5, now()))`,
 			e.ID, string(e.Type), e.AggregateID, payload, e.OccurredAt,
 		)
 	}

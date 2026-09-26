@@ -43,6 +43,7 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wallet_app') THEN
         REVOKE UPDATE, DELETE, TRUNCATE ON wallet_ledger_entries FROM wallet_app;
+        REVOKE INSERT, UPDATE ON schema_migrations FROM wallet_app;
     END IF;
 END;
 $$;

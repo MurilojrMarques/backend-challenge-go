@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,7 +14,10 @@ import (
 	"github.com/MurilojrMarques/backend-challenge-go/internal/domain/wallet"
 )
 
-const walletColumns = `id, player_id, currency, balance_units, version, created_at, updated_at`
+const (
+	walletColumns              = `id, player_id, currency, balance_units, version, created_at, updated_at`
+	walletPlayerCurrencyUnique = "wallets_player_currency_key"
+)
 
 type walletRow struct {
 	ID           uuid.UUID `db:"id"`
@@ -67,7 +71,12 @@ func (r *walletRepo) Create(ctx context.Context, w *wallet.Wallet) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		s.ID, s.PlayerID, s.Balance.Currency().Code(), s.Balance.Units(), s.Version, s.CreatedAt, s.UpdatedAt,
 	)
-	return translate(err)
+	err = translate(err)
+	var conflict *application.ConflictError
+	if errors.As(err, &conflict) && conflict.Constraint == walletPlayerCurrencyUnique {
+		return fmt.Errorf("%w: %w", application.ErrWalletExists, err)
+	}
+	return err
 }
 
 func (r *walletRepo) Get(ctx context.Context, id uuid.UUID) (*wallet.Wallet, error) {
