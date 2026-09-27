@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -301,4 +302,27 @@ func TestConsumerReturnsMessagesOnShutdown(t *testing.T) {
 	_, reset := q.visibility["rh-m1"]
 	assert.True(t, reset, "visibility reset so another instance picks the message up immediately")
 	assert.Equal(t, time.Duration(0), q.visibility["rh-m1"])
+}
+
+func TestConsumerDeadLettersPoisonedMessageIDsAtOnce(t *testing.T) {
+	t.Parallel()
+	h := apptest.NewHarness(t)
+	q := newFakeQueue()
+	c := newConsumer(t, h, q)
+	w := h.OpenWallet(t, "100.00")
+
+	valid := envelope(t, w, "BET", "b1", "10.00")
+	poisoned := []byte(strings.Replace(string(valid), `"messageId":"msg-b1"`, `"messageId":"msg\u0000b1"`, 1))
+	require.NotEqual(t, string(valid), string(poisoned))
+
+	q.enqueue(inGroup(message("poison", poisoned, 1), w.ID.String()), inGroup(message("next", envelope(t, w, "BET", "b2", "10.00"), 1), w.ID.String()))
+	_, err := c.tick(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, q.dlq, 1, "a control character in the messageId is permanent, never retried")
+	assert.True(t, q.deleted["rh-poison"])
+	_, retried := q.visibility["rh-poison"]
+	assert.False(t, retried, "the poisoned message does not hold its group back")
+	assert.True(t, q.deleted["rh-next"], "the next message of the same wallet flows normally")
+	assert.True(t, apptest.BRL("90.00").Equal(h.Balance(t, w.ID)))
 }

@@ -22,8 +22,8 @@ func (r InboxRecord) Validate() error {
 		"messageId":    r.MessageID,
 		"payloadHash":  r.PayloadHash,
 	} {
-		if value == "" || len(value) > 128 {
-			return fmt.Errorf("%w: inbox %s must be non-empty and at most 128 bytes", ErrInvalidInput, name)
+		if value == "" || len(value) > 128 || !CleanText(value) {
+			return fmt.Errorf("%w: inbox %s must be non-empty, at most 128 bytes and free of control characters", ErrInvalidInput, name)
 		}
 	}
 	if r.ReceivedAt.IsZero() {

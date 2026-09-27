@@ -62,6 +62,8 @@ func translatePgError(pgErr *pgconn.PgError) error {
 		switch pgErr.Code[:2] {
 		case "08", "53", "57":
 			return fmt.Errorf("%w: %s (%s)", application.ErrUnavailable, pgErr.Message, pgErr.Code)
+		case "22":
+			return fmt.Errorf("%w: value rejected by the database (%s)", application.ErrInvalidInput, pgErr.Code)
 		}
 	}
 	return fmt.Errorf("postgres: %s (%s): %w", pgErr.Message, pgErr.Code, pgErr)

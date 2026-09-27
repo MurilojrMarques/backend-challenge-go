@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,4 +47,16 @@ func TestRunUsageErrors(t *testing.T) {
 
 	assert.Equal(t, 2, run(nil, "postgres://x"))
 	assert.Equal(t, 2, run([]string{"up"}, ""))
+}
+
+func TestInvalidDatabaseURLIsRejectedWithoutEcho(t *testing.T) {
+	assert.Equal(t, 2, run([]string{"up"}, "postgres://wallet_migrator:s3cr%zzt@db/wallet"))
+}
+
+func TestRedactHidesThePassword(t *testing.T) {
+	err := errors.New(`connect "postgres://wallet_migrator:p@ss-w0rd@db/wallet": refused (p@ss-w0rd)`)
+	msg := redact(err, "postgres://wallet_migrator:p%40ss-w0rd@db/wallet")
+	assert.NotContains(t, msg, "p@ss-w0rd")
+	assert.Contains(t, msg, "refused")
+	assert.Equal(t, "plain", redact(errors.New("plain"), "postgres://db/wallet"))
 }

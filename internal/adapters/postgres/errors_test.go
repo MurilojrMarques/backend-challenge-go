@@ -85,3 +85,13 @@ func TestTranslateKeepsUnknownErrors(t *testing.T) {
 	var pg *pgconn.PgError
 	assert.True(t, errors.As(syntax, &pg))
 }
+
+func TestDataExceptionsArePermanentInputErrors(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{"22021", "22001", "22P02", "22003"} {
+		err := translate(&pgconn.PgError{Code: code, Message: `invalid byte sequence for encoding "UTF8": 0x00`})
+		assert.ErrorIs(t, err, application.ErrInvalidInput, code)
+		assert.NotErrorIs(t, err, application.ErrUnavailable, code)
+		assert.NotContains(t, err.Error(), "0x00", "the database message is not echoed to clients")
+	}
+}

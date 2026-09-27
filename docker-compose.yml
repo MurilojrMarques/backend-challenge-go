@@ -78,7 +78,7 @@ services:
       - log_min_duration_statement=250
     shm_size: 256mb
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/postgres:/docker-entrypoint-initdb.d:ro
@@ -102,7 +102,7 @@ services:
       KC_METRICS_ENABLED: "false"
       KC_LOG_LEVEL: ${KEYCLOAK_LOG_LEVEL:-warn}
     ports:
-      - "8180:8080"
+      - "127.0.0.1:8180:8080"
     volumes:
       - ./deploy/keycloak:/opt/keycloak/data/import:ro
     healthcheck:
@@ -126,7 +126,7 @@ services:
       DEBUG: "0"
       AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
     ports:
-      - "4566:4566"
+      - "127.0.0.1:4566:4566"
     volumes:
       - ./deploy/localstack:/etc/localstack/init/ready.d:ro
     healthcheck:
@@ -164,7 +164,7 @@ services:
   app:
     <<: *app
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       <<: *app-env
       APP_ROLES: ${APP_ROLES:-api,consumer,outbox,pending}

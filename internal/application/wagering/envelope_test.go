@@ -1,6 +1,7 @@
 package wagering_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -54,12 +55,17 @@ func TestParseEnvelopeRejectsInvalid(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
-		"not json":      `{`,
-		"unknown field": `{"messageId":"m","type":"WagerTransactionRequested","occurredAt":"2026-09-08T12:00:00Z","data":{},"extra":1}`,
-		"missing id":    `{"type":"WagerTransactionRequested","occurredAt":"2026-09-08T12:00:00Z","data":{}}`,
-		"wrong type":    `{"messageId":"m","type":"SomethingElse","occurredAt":"2026-09-08T12:00:00Z","data":{}}`,
-		"bad timestamp": `{"messageId":"m","type":"WagerTransactionRequested","occurredAt":"yesterday","data":{}}`,
-		"amount number": `{"messageId":"m","type":"WagerTransactionRequested","occurredAt":"2026-09-08T12:00:00Z","data":{"money":{"amount":25}}}`,
+		"not json":           `{`,
+		"unknown field":      `{"messageId":"m","type":"WagerTransactionRequested","occurredAt":"2026-09-08T12:00:00Z","data":{},"extra":1}`,
+		"missing id":         `{"type":"WagerTransactionRequested","occurredAt":"2026-09-08T12:00:00Z","data":{}}`,
+		"wrong type":         `{"messageId":"m","type":"SomethingElse","occurredAt":"2026-09-08T12:00:00Z","data":{}}`,
+		"bad timestamp":      `{"messageId":"m","type":"WagerTransactionRequested","occurredAt":"yesterday","data":{}}`,
+		"amount number":      `{"messageId":"m","type":"WagerTransactionRequested","occurredAt":"2026-09-08T12:00:00Z","data":{"money":{"amount":25}}}`,
+		"nul in messageId":   strings.Replace(validEnvelope, `"msg-123"`, `"msg\u0000123"`, 1),
+		"padded messageId":   strings.Replace(validEnvelope, `"msg-123"`, `" msg-123"`, 1),
+		"messageId too long": strings.Replace(validEnvelope, `"msg-123"`, `"`+strings.Repeat("m", 129)+`"`, 1),
+		"trailing data":      validEnvelope + `{}`,
+		"trailing garbage":   validEnvelope + ` x`,
 	}
 	for name, body := range cases {
 		_, err := wagering.ParseEnvelope("c", []byte(body))

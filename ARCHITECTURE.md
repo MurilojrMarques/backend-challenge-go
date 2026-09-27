@@ -111,6 +111,8 @@ IdP: Keycloak, por rodar em um container com realm importado de arquivo, oferece
 
 Tokens são verificados com go-oidc contra o discovery do realm: assinatura, emissor, audience `wallet-api` e expiração com 30s de tolerância. O papel `wallet-internal` vira principal interno; `wallet-provider` exige a claim `providerId`. Falha ao buscar as chaves do JWKS é `503`, não `401`, para que o provedor não conclua que sua credencial quebrou.
 
+O escopo que coloca a audience `wallet-api` no token é atribuído apenas aos clients deste serviço, não como padrão do realm. Cada client tem `fullScopeAllowed` desligado e um mapeamento explícito do único papel que pode carregar. Um client criado depois no mesmo realm não emite tokens aceitos por esta API nem herda papéis por acidente.
+
 A autorização fica na aplicação: abrir e ler carteiras exige interno; submeter exige o `providerId` do token igual ao do corpo; consultas de transação por provedor só enxergam o próprio provedor, e o resto responde `404` para não revelar existência.
 
 ## Fx e ciclo de vida
@@ -123,6 +125,32 @@ Partida: pool e ping do Postgres, discovery OIDC com retry até o prazo, servido
 
 slog em JSON com `roles` em toda linha e `correlationId` por requisição e mensagem. Métricas em registry privado do Prometheus, com labels limitados a valores conhecidos para não explodir cardinalidade. Readiness executa os checks em paralelo com prazo curto.
 
+## Segurança
+
+### Controles
+
+- Entrada estrita: JSON sem campos desconhecidos nem dados após o objeto, dinheiro só como string, identificadores externos e `messageId` limitados a 128 bytes, em UTF-8 válido e sem caracteres de controle. Erros de decodificação respondem com mensagens genéricas, sem nomes de tipos internos.
+- `X-Correlation-Id` só é aceito no formato `[A-Za-z0-9._:-]{1,128}`; fora disso o serviço gera um novo. A mesma regra vale para o `messageId` usado como correlação nos eventos.
+- Erros de dados do Postgres, classe `22`, são permanentes: HTTP responde `400` e a mensagem vai para a DLQ na primeira tentativa, em vez de segurar o grupo FIFO da carteira em retry.
+- Segredos fora dos logs: URLs inválidas nunca são ecoadas nos erros de configuração, e o `migrate` remove a senha de qualquer erro que registra. O pgx já redige a senha nos próprios erros.
+- Banco com privilégio mínimo: `wallet_app` não tem `DELETE`, não altera o ledger e não escreve em `schema_migrations`.
+- Imagem distroless `nonroot` com três binários estáticos, sistema de arquivos somente leitura e `cap_drop: ALL`. Docker Scout não encontra CVEs na imagem da aplicação e `govulncheck` não encontra vulnerabilidades alcançáveis.
+- O compose publica todas as portas apenas em `127.0.0.1`.
+
+### Riscos conhecidos e plano para produção
+
+1. **A fila é uma fronteira de confiança.** O consumidor aceita o `providerId` do corpo da mensagem. No compose o LocalStack não autentica nem aplica IAM, então quem alcança a porta 4566 pode enfileirar operações em nome de qualquer provedor, inclusive `WIN`. Por isso as portas ficam em loopback. Em produção o gateway autentica o provedor e grava o `providerId` num atributo assinado, o consumidor usa o atributo em vez do corpo, e a policy da fila restringe `SendMessage` ao gateway e exige TLS.
+2. **A carteira do jogador é compartilhada entre provedores.** Um provedor que conheça `walletId` e `playerId` consegue apostar nela e inferir o saldo pelas rejeições `INSUFFICIENT_FUNDS`. Em produção isso pede vínculo entre jogador e provedor por sessão ou lista de permissão, limites de velocidade por provedor e alerta de taxa de rejeição.
+3. **Superfícies sem autenticação.** `/metrics` e `/health/ready` estão no mesmo listener da API. O readiness consulta Postgres e SQS a cada chamada, e um token com `kid` desconhecido provoca nova busca de chaves no Keycloak. Em produção: listener administrativo separado, readiness com cache de um ou dois segundos, rate limit no ingress e intervalo mínimo entre buscas de JWKS.
+4. **Readiness por papel.** Toda instância com SQS consulta a fila de entrada. Um pod só com o papel `outbox` e IAM mínimo precisaria de um checker na fila de eventos.
+5. **Privilégios por coluna.** `wallet_app` tem `UPDATE` em todas as colunas de `wallets` e `wager_transactions`; a imutabilidade de valor, hash e status terminal é imposta pelo `WHERE` do repositório. Em produção: grants por coluna e trigger contra saída de status terminal. Os `REVOKE` da migração 000003 só rodam se o papel já existir e devem virar pré-condição em outros ambientes.
+6. **Transporte e realm.** Issuer OIDC em `http` e `sslmode=disable` são aceitos. Em produção: validação que exija `https` e `verify-full`, realm com `sslRequired: external`, sem os clients de fixture `provider-short-lived` e `no-role`, e secrets injetados na importação.
+7. **Duas formas de DLQ.** O redrive nativo após 20 recebimentos convive com a cópia feita pela aplicação, com formatos diferentes. Mensagens seguradas atrás de uma falha transitória do mesmo grupo também contam recebimentos e podem ser redirecionadas sem processamento. Em produção a decisão de DLQ fica só na aplicação, com uma identidade de operação para reprocessar.
+8. **Janela de deduplicação.** O SQS descarta republicações com o mesmo `eventId` por 5 minutos. Consumidores de `wallet-events.fifo` devem ser idempotentes por `eventId`.
+9. **Contêineres.** Sem limites de memória e processos, imagens referenciadas por tag, `FAULT_INJECT` compilado no binário e parâmetros de consultas lentas no log do Postgres. Em produção: `mem_limit` e `pids_limit`, digests, build tag para a injeção de falha e `log_parameter_max_length=0`.
+10. **Imagens de terceiros.** Postgres, Keycloak e LocalStack têm CVEs publicadas nas tags usadas; o Keycloak 26.3 tem correções a partir de 26.4.15. Só rodam no ambiente local.
+11. **Achados do gosec.** As conversões para `int32` nos parâmetros do SQS e nas tentativas de referência são limitadas pela validação da configuração, com visibilidade até 12h, espera até 20s e lote até 10; não há overflow alcançável.
+
 ## Interpretações adotadas
 
 - Operações sem dependência são concluídas de forma síncrona dentro de uma única transação; não há commit intermediário de aceite. Só reversões sem referência ficam `PENDING_REFERENCE`, e essa é a única pendência durável retomada por outra instância.
@@ -130,7 +158,7 @@ slog em JSON com `roles` em toda linha e `correlationId` por requisição e mens
 - `LOSS` exige `"0.00"`, produz `WagerTransactionProcessed` e não toca saldo, ledger nem versão.
 - Uma referência aceita uma única reversão bem-sucedida de qualquer tipo, mais restrito do que "do mesmo tipo", para que um débito nunca seja devolvido duas vezes por caminhos diferentes.
 - A chave de idempotência é escopada por provedor: dois provedores podem usar a mesma string sem colidir.
-- O `providerId` de uma mensagem SQS é aceito como vem, porque a fila é interna e protegida pelas credenciais do broker; as validações de domínio continuam sendo aplicadas.
+- O `providerId` de uma mensagem SQS é aceito como vem, e as validações de domínio continuam sendo aplicadas. Isso pressupõe que só o gateway consegue enfileirar; no compose essa garantia vem apenas das portas em loopback, como descrito em Segurança.
 - `WALLET_PLAYER_MISMATCH` revela que a carteira existe para quem tem token de provedor. Preferimos o código útil ao provedor a esconder a existência.
 
 ## Trade-offs, limitações e trabalho não concluído

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -32,10 +33,14 @@ func run(args []string, databaseURL string) int {
 		logger.Error("DATABASE_URL is required")
 		return 2
 	}
+	if _, err := url.Parse(databaseURL); err != nil {
+		logger.Error("DATABASE_URL is not a valid url")
+		return 2
+	}
 
 	m, err := newMigrator(databaseURL)
 	if err != nil {
-		logger.Error("cannot initialise migrator", "err", err)
+		logger.Error("cannot initialise migrator", "err", redact(err, databaseURL))
 		return 1
 	}
 	defer func() {
@@ -49,10 +54,22 @@ func run(args []string, databaseURL string) int {
 			logger.Error(err.Error())
 			return 2
 		}
-		logger.Error("migration failed", "command", args[0], "err", err)
+		logger.Error("migration failed", "command", args[0], "err", redact(err, databaseURL))
 		return 1
 	}
 	return 0
+}
+
+func redact(err error, databaseURL string) string {
+	msg := err.Error()
+	u, perr := url.Parse(databaseURL)
+	if perr != nil || u.User == nil {
+		return msg
+	}
+	if password, ok := u.User.Password(); ok && password != "" {
+		msg = strings.ReplaceAll(msg, password, "xxxxx")
+	}
+	return msg
 }
 
 var errUsage = errors.New(usage)

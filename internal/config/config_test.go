@@ -159,3 +159,13 @@ func TestMessagingSettings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, config.FaultOutboxAfterPublish, cfg.Fault.InjectPoint)
 }
+
+func TestInvalidURLsNeverEchoTheirContents(t *testing.T) {
+	t.Parallel()
+	env := minimal()
+	env["DATABASE_URL"] = "postgres://wallet_app:s3cr%zzt@postgres:5432/wallet"
+	_, err := config.Load(getenv(env))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DATABASE_URL")
+	assert.NotContains(t, err.Error(), "s3cr", "a password in a malformed url must not reach the startup log")
+}

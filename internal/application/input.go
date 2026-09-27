@@ -2,7 +2,10 @@ package application
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -38,9 +41,19 @@ func NewID() uuid.UUID {
 	return uuid.Must(uuid.NewV7())
 }
 
+var correlationPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+func ValidCorrelationID(s string) bool {
+	return correlationPattern.MatchString(s)
+}
+
 func CorrelationID(given string, fallback uuid.UUID) string {
-	if given != "" {
+	if ValidCorrelationID(given) {
 		return given
 	}
 	return fallback.String()
+}
+
+func CleanText(s string) bool {
+	return utf8.ValidString(s) && strings.TrimSpace(s) == s && !strings.ContainsFunc(s, unicode.IsControl)
 }

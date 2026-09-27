@@ -50,7 +50,7 @@ docker compose run --rm migrate force 3     # corrige a versão após uma falha 
 
 Fora do compose, `go run ./cmd/migrate up` com `DATABASE_URL` apontando para o banco. Cada migração tem o par `up` e `down`; o `down` remove tabelas, triggers e funções na ordem inversa.
 
-Portas: API `8080`, Keycloak `8180`, LocalStack `4566`, Postgres `5432`. Com o compose de teste sobem três réplicas em `8081`, `8082` e `8083`:
+Portas: API `8080`, Keycloak `8180`, LocalStack `4566`, Postgres `5432`, todas publicadas apenas em `127.0.0.1`. Com o compose de teste sobem três réplicas em `8081`, `8082` e `8083`:
 
 ```
 make e2e-up
@@ -313,5 +313,7 @@ docker run --rm -v "${PWD}:/src" -w /src -v wallet-gomod:/go/pkg/mod -v wallet-g
 - O outbox nunca descarta um evento que falha ao publicar: o agregado fica represado e `wallet_outbox_oldest_pending_seconds` denuncia. Pular o evento quebraria a ordem.
 - Não há retenção de `outbox_events` e `inbox_messages`; um job com o papel `wallet_migrator` deve apagar publicados e concluídos antigos.
 - O LocalStack Community não aplica as políticas IAM criadas no init; elas documentam o que cada credencial precisaria na AWS.
+- No compose a fila não autentica: qualquer processo que alcance a porta 4566 pode enfileirar operações em nome de um provedor. Por isso todas as portas publicadas ficam em `127.0.0.1`. Não exponha essas portas em rede compartilhada.
 - Os secrets do Keycloak e do banco são fixos no compose para desenvolvimento. Em produção vêm de um cofre.
 - A existência de uma carteira é observável por quem tem token de provedor via `WALLET_PLAYER_MISMATCH`.
+- A análise de segurança completa, com os riscos conhecidos e o plano para produção, está na seção Segurança do `ARCHITECTURE.md`.

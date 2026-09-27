@@ -108,3 +108,38 @@ func TestRouterReportsRequestsToObserver(t *testing.T) {
 	assert.Equal(t, observed{method: http.MethodGet, route: "/health/live", status: http.StatusOK}, obs.entries[0])
 	assert.Equal(t, http.StatusNotFound, obs.entries[1].status)
 }
+
+func TestUnsafeCorrelationIDsAreReplaced(t *testing.T) {
+	t.Parallel()
+	a := newAPI(t)
+	for _, bad := range []string{"has space", "zero\u200bwidth", "<script>"} {
+		res := a.do(t, http.MethodGet, "/health/live", "", nil, map[string]string{httpapi.CorrelationHeader: bad})
+		got := res.rec.Header().Get(httpapi.CorrelationHeader)
+		assert.NotEqual(t, bad, got)
+		_, err := uuid.Parse(got)
+		assert.NoError(t, err, "a fresh id is generated for %q", bad)
+	}
+}
+
+func TestMalformedBodiesDoNotLeakDecoderInternals(t *testing.T) {
+	t.Parallel()
+	a := newAPI(t)
+	player := uuid.Must(uuid.NewV7()).String()
+	cases := map[string]struct {
+		body string
+		want string
+	}{
+		"wrong type":    {`{"playerId":"` + player + `","initialBalance":{"amount":10.00,"currency":"BRL"}}`, "has the wrong type"},
+		"unknown field": {`{"playerId":"` + player + `","initialBalance":{"amount":"1.00","currency":"BRL"},"extra":1}`, `unknown field "extra"`},
+		"not json":      {`{"playerId":`, "request body is not valid json"},
+		"syntax":        {`{"playerId" "x"}`, "request body is not valid json"},
+	}
+	for name, tc := range cases {
+		res := a.do(t, http.MethodPost, "/wallets", tokenInternal, tc.body, nil)
+		assert.Equal(t, http.StatusBadRequest, res.rec.Code, name)
+		msg, _ := res.body["message"].(string)
+		assert.Contains(t, msg, tc.want, name)
+		assert.NotContains(t, msg, "Go struct", name)
+		assert.NotContains(t, msg, "OpenWalletRequest", name)
+	}
+}

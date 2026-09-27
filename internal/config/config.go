@@ -252,7 +252,7 @@ func requireURL(raw string, schemes ...string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid url: %w", err)
+		return errors.New("is not a valid url")
 	}
 	for _, s := range schemes {
 		if u.Scheme == s && u.Host != "" {

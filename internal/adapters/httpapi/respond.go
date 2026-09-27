@@ -45,12 +45,29 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any)
 		if errors.As(err, &tooLarge) {
 			return errBodyTooLarge
 		}
-		return fmt.Errorf("%w: %v", errBadJSON, err)
+		return fmt.Errorf("%w: %s", errBadJSON, describeJSONError(err))
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return fmt.Errorf("%w: unexpected data after json object", errBadJSON)
 	}
 	return nil
+}
+
+func describeJSONError(err error) string {
+	var syntax *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	switch {
+	case errors.Is(err, io.EOF):
+		return "request body is empty"
+	case errors.Is(err, io.ErrUnexpectedEOF), errors.As(err, &syntax):
+		return "request body is not valid json"
+	case errors.As(err, &typeErr) && typeErr.Field != "":
+		return fmt.Sprintf("field %q has the wrong type", typeErr.Field)
+	case strings.HasPrefix(err.Error(), "json: unknown field "):
+		return strings.TrimPrefix(err.Error(), "json: ")
+	default:
+		return "request body could not be decoded"
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

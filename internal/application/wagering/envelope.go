@@ -6,13 +6,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"io"
 	"time"
 
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application"
 )
 
-const InboundMessageType = "WagerTransactionRequested"
+const (
+	InboundMessageType = "WagerTransactionRequested"
+	maxMessageIDLength = 128
+)
 
 type envelope struct {
 	MessageID  string       `json:"messageId"`
@@ -46,8 +49,11 @@ func ParseEnvelope(consumerName string, body []byte) (InboundMessage, error) {
 	if err := dec.Decode(&env); err != nil {
 		return InboundMessage{}, fmt.Errorf("%w: malformed envelope: %v", application.ErrInvalidInput, err)
 	}
-	if strings.TrimSpace(env.MessageID) == "" {
-		return InboundMessage{}, fmt.Errorf("%w: envelope without messageId", application.ErrInvalidInput)
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return InboundMessage{}, fmt.Errorf("%w: unexpected data after the envelope", application.ErrInvalidInput)
+	}
+	if env.MessageID == "" || len(env.MessageID) > maxMessageIDLength || !application.CleanText(env.MessageID) {
+		return InboundMessage{}, fmt.Errorf("%w: messageId must be non-empty, at most %d bytes and free of control characters", application.ErrInvalidInput, maxMessageIDLength)
 	}
 	if env.Type != InboundMessageType {
 		return InboundMessage{}, fmt.Errorf("%w: unsupported message type %q", application.ErrInvalidInput, env.Type)

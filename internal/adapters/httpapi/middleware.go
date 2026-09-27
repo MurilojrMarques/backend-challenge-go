@@ -26,7 +26,7 @@ func correlationFrom(ctx context.Context) string {
 func correlation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(CorrelationHeader)
-		if id == "" || len(id) > 128 || !cleanText(id) {
+		if !application.ValidCorrelationID(id) {
 			id = uuid.Must(uuid.NewV7()).String()
 		}
 		w.Header().Set(CorrelationHeader, id)
