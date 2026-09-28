@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -34,14 +35,39 @@ func correlation(next http.Handler) http.Handler {
 	})
 }
 
+type logFields struct {
+	mu    sync.Mutex
+	attrs []any
+}
+
+type logFieldsKey struct{}
+
+func annotate(ctx context.Context, attrs ...any) {
+	f, ok := ctx.Value(logFieldsKey{}).(*logFields)
+	if !ok {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attrs = append(f.attrs, attrs...)
+}
+
+func (f *logFields) snapshot() []any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]any(nil), f.attrs...)
+}
+
 func requestTelemetry(base *slog.Logger, observer RequestObserver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			l := base.With("correlationId", correlationFrom(r.Context()))
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			fields := &logFields{}
+			ctx := context.WithValue(withLogger(r.Context(), l), logFieldsKey{}, fields)
 
-			next.ServeHTTP(ww, r.WithContext(withLogger(r.Context(), l)))
+			next.ServeHTTP(ww, r.WithContext(ctx))
 
 			elapsed := time.Since(start)
 			route := chi.RouteContext(r.Context()).RoutePattern()
@@ -60,12 +86,7 @@ func requestTelemetry(base *slog.Logger, observer RequestObserver) func(http.Han
 				"bytes", ww.BytesWritten(),
 				"durationMs", elapsed.Milliseconds(),
 			}
-			if p, ok := application.PrincipalFrom(r.Context()); ok {
-				attrs = append(attrs, "subject", p.Subject, "role", string(p.Role))
-				if p.ProviderID != "" {
-					attrs = append(attrs, "providerId", p.ProviderID)
-				}
-			}
+			attrs = append(attrs, fields.snapshot()...)
 			switch {
 			case status >= 500:
 				l.ErrorContext(r.Context(), "http request", attrs...)

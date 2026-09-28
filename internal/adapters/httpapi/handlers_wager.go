@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application"
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application/wagering"
@@ -54,12 +55,23 @@ func (h *wagerHandler) submit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	if walletID, err := uuid.Parse(req.WalletID); err == nil {
+		annotate(r.Context(), "walletId", walletID.String())
+	}
+	if len(req.ExternalTransactionID) <= wager.MaxFieldLength && cleanText(req.ExternalTransactionID) {
+		annotate(r.Context(), "externalTransactionId", req.ExternalTransactionID)
+	}
 	res, err := h.service.Submit(r.Context(), principal, req.command(key, correlationFrom(r.Context())))
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
+	annotateResult(r, res.TransactionID, res.Status, res.IdempotentReplay)
 	writeJSON(w, statusFor(res.Status), wagerResultResponse(res))
+}
+
+func annotateResult(r *http.Request, transactionID uuid.UUID, status wager.Status, replay bool) {
+	annotate(r.Context(), "transactionId", transactionID.String(), "wagerStatus", status.String(), "idempotentReplay", replay)
 }
 
 func statusFor(s wager.Status) int {
@@ -84,11 +96,13 @@ func (h *wagerHandler) getByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	annotate(r.Context(), "transactionId", id.String())
 	view, err := h.service.GetByID(r.Context(), principal, id)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
+	annotate(r.Context(), "walletId", view.WalletID.String())
 	writeJSON(w, http.StatusOK, wagerViewResponse(view))
 }
 
@@ -112,10 +126,12 @@ func (h *wagerHandler) getByExternalID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, application.ErrNotFound)
 		return
 	}
+	annotate(r.Context(), "externalTransactionId", externalID)
 	view, err := h.service.GetByExternalID(r.Context(), principal, providerID, externalID)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
+	annotate(r.Context(), "transactionId", view.ID.String(), "walletId", view.WalletID.String())
 	writeJSON(w, http.StatusOK, wagerViewResponse(view))
 }

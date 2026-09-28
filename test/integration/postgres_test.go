@@ -489,3 +489,50 @@ func TestConcurrentSubmissionsOnPostgres(t *testing.T) {
 	assert.Equal(t, 1, inFlightOrReplay)
 	assert.True(t, brl("70.00").Equal(s.balance(t, w3.ID)))
 }
+
+func TestIndependentWalletsDoNotBlockEachOther(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newServices(t)
+	locked := s.open(t, "100.00")
+	free := s.open(t, "100.00")
+
+	holder := rawPool(t, pg.AppURL())
+	lock, err := holder.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = lock.Rollback(ctx) }()
+	_, err = lock.Exec(ctx, "SELECT id FROM wallets WHERE id = $1 FOR UPDATE", locked.ID)
+	require.NoError(t, err, "another session now holds the row lock of one wallet")
+
+	freeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	res, err := s.wagers.Submit(freeCtx, provider, command(free, "BET", "free-"+newID().String(), "10.00"))
+	require.NoError(t, err, "a different wallet is processed while the first one is locked, so there is no global lock")
+	assert.Equal(t, wager.Processed, res.Status)
+	assert.True(t, brl("90.00").Equal(s.balance(t, free.ID)))
+
+	type result struct {
+		res wagering.Result
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		r, err := s.wagers.Submit(ctx, provider, command(locked, "BET", "locked-"+newID().String(), "10.00"))
+		done <- result{r, err}
+	}()
+	select {
+	case r := <-done:
+		t.Fatalf("the locked wallet moved while its row was held: %+v", r)
+	case <-time.After(700 * time.Millisecond):
+	}
+
+	require.NoError(t, lock.Rollback(ctx))
+	select {
+	case r := <-done:
+		require.NoError(t, r.err)
+		assert.Equal(t, wager.Processed, r.res.Status, "the waiting operation completes as soon as the lock is released")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the locked wallet did not resume after the lock was released")
+	}
+	assert.True(t, brl("90.00").Equal(s.balance(t, locked.ID)))
+}

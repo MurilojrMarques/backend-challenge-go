@@ -411,3 +411,120 @@ func TestWalletEventsArePublishedInOrder(t *testing.T) {
 	}))
 	assert.Equal(t, []float64{1, 2, 3, 4}, versions, "balance events arrive in version order")
 }
+
+func TestHTTPAndSQSRaceForTheSameOperation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := openWallet(t, "100.00")
+	bet := testutil.NewWager(w.id, w.player, externalID("race"), "BET", "30.00")
+	messageID := "msg-" + bet.ExternalTransactionID
+
+	replicas := len(env.baseURLs)
+	results := make([]testutil.Response, replicas)
+	errs := make([]error, replicas+1)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		errs[replicas] = testutil.Send(ctx, env.sqs, env.wagerQueue, w.id, messageID, bet.Envelope(messageID))
+	}()
+	for i := 0; i < replicas; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i], errs[i] = env.providerAAt(i).Submit(ctx, bet, bet.Key())
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
+
+	transactionID := results[0].String("transactionId")
+	applied := 0
+	for _, res := range results {
+		require.Equal(t, http.StatusOK, res.Status, string(res.Raw))
+		assert.Equal(t, "PROCESSED", res.String("status"))
+		assert.Equal(t, "70.00", res.Amount("balance"), "every channel reports the balance of the single application")
+		assert.Equal(t, transactionID, res.String("transactionId"))
+		if !res.Bool("idempotentReplay") {
+			applied++
+		}
+	}
+	assert.LessOrEqual(t, applied, 1, "at most one HTTP call applies the operation; when SQS wins, every HTTP call is a replay")
+
+	require.NoError(t, testutil.Poll(ctx, 60*time.Second, func() (bool, error) {
+		n, err := testutil.Depth(ctx, env.sqs, env.wagerQueue)
+		return n == 0, err
+	}), "the queued copy of the operation is consumed")
+
+	res, err := env.internalAt(0).Get(ctx, "/wallets/"+w.id)
+	require.NoError(t, err)
+	assert.Equal(t, "70.00", res.Amount("balance"))
+	assert.Equal(t, float64(2), res.Number("version"))
+	res, err = env.internalAt(1).Get(ctx, "/wallets/"+w.id+"/ledger")
+	require.NoError(t, err)
+	assert.Len(t, res.List("entries"), 2, "opening credit and one debit, whichever channel won")
+	res, err = env.internalAt(2).Do(ctx, http.MethodPost, "/wallets/"+w.id+"/reconciliation", nil, nil)
+	require.NoError(t, err)
+	assert.True(t, res.Bool("consistent"), string(res.Raw))
+
+	again, err := env.providerAAt(1).Submit(ctx, bet, bet.Key())
+	require.NoError(t, err)
+	assert.True(t, again.Bool("idempotentReplay"))
+	assert.Equal(t, transactionID, again.String("transactionId"))
+}
+
+func TestIndependentWalletsProgressInParallelAcrossReplicas(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	const walletCount, betsPerWallet = 6, 5
+
+	wallets := make([]wallet, walletCount)
+	for i := range wallets {
+		wallets[i] = openWallet(t, "100.00")
+	}
+
+	type outcome struct {
+		res testutil.Response
+		err error
+	}
+	outcomes := make([][]outcome, walletCount)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for wi, w := range wallets {
+		outcomes[wi] = make([]outcome, betsPerWallet)
+		for bi := 0; bi < betsPerWallet; bi++ {
+			wg.Add(1)
+			go func(wi, bi int, w wallet) {
+				defer wg.Done()
+				<-start
+				bet := testutil.NewWager(w.id, w.player, externalID(fmt.Sprintf("par%d-%d", wi, bi)), "BET", "10.00")
+				res, err := env.providerAAt(wi+bi).Submit(ctx, bet, bet.Key())
+				outcomes[wi][bi] = outcome{res: res, err: err}
+			}(wi, bi, w)
+		}
+	}
+	close(start)
+	wg.Wait()
+
+	for wi, w := range wallets {
+		for bi, o := range outcomes[wi] {
+			require.NoError(t, o.err)
+			require.Equal(t, http.StatusOK, o.res.Status, "wallet %d bet %d: %s", wi, bi, o.res.Raw)
+			assert.Equal(t, "PROCESSED", o.res.String("status"))
+		}
+		res, err := env.internalAt(wi).Get(ctx, "/wallets/"+w.id)
+		require.NoError(t, err)
+		assert.Equal(t, "50.00", res.Amount("balance"), "wallet %d", wi)
+		assert.Equal(t, float64(1+betsPerWallet), res.Number("version"), "wallet %d", wi)
+		res, err = env.internalAt(wi+1).Do(ctx, http.MethodPost, "/wallets/"+w.id+"/reconciliation", nil, nil)
+		require.NoError(t, err)
+		assert.True(t, res.Bool("consistent"), "wallet %d: %s", wi, res.Raw)
+		assert.Equal(t, float64(1+betsPerWallet), res.Number("checkedEntries"), "wallet %d", wi)
+	}
+}

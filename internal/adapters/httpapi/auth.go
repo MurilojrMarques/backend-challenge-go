@@ -141,8 +141,13 @@ func Authenticate(verifier TokenVerifier) func(http.Handler) http.Handler {
 			}
 			principal, err := PrincipalFromClaims(claims)
 			if err != nil {
+				annotate(r.Context(), "subject", claims.Subject)
 				writeError(w, r, err)
 				return
+			}
+			annotate(r.Context(), "subject", principal.Subject, "role", string(principal.Role))
+			if principal.ProviderID != "" {
+				annotate(r.Context(), "providerId", principal.ProviderID)
 			}
 			next.ServeHTTP(w, r.WithContext(application.WithPrincipal(r.Context(), principal)))
 		})

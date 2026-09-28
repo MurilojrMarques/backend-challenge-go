@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application"
 	"github.com/MurilojrMarques/backend-challenge-go/internal/application/wagering"
@@ -82,14 +83,19 @@ func (c *Consumer) handle(ctx context.Context, m application.Message, budget tim
 	defer cancel()
 	started := c.now()
 	observe := func(outcome string) { c.metrics.MessageHandled(outcome, c.now().Sub(started)) }
-	log := c.logger.With("messageId", m.ID, "groupId", m.GroupID, "receiveCount", m.ReceiveCount)
+	log := c.logger.With("sqsMessageId", m.ID, "groupId", m.GroupID, "receiveCount", m.ReceiveCount)
 
 	inbound, err := wagering.ParseEnvelope(c.opts.ConsumerName, m.Body)
 	if err != nil {
 		c.deadLetter(ctx, log, m, "invalid_envelope", err, observe)
 		return
 	}
-	log = log.With("providerId", inbound.Command.ProviderID, "externalTransactionId", inbound.Command.ExternalTransactionID)
+	log = log.With(
+		"messageId", clip(inbound.MessageID),
+		"providerId", clip(inbound.Command.ProviderID),
+		"externalTransactionId", clip(inbound.Command.ExternalTransactionID),
+		"walletId", clip(inbound.Command.WalletID),
+	)
 
 	res, err := c.wagers.Consume(ctx, inbound)
 	switch {
@@ -154,10 +160,10 @@ func (c *Consumer) holdBack(ctx context.Context, m application.Message, delay ti
 	dctx, cancel := detached(ctx)
 	defer cancel()
 	if err := c.queue.ChangeVisibility(dctx, m.ReceiptHandle, delay); err != nil {
-		c.logger.WarnContext(dctx, "message of a held group keeps its visibility", "messageId", m.ID, "groupId", m.GroupID, "err", err)
+		c.logger.WarnContext(dctx, "message of a held group keeps its visibility", "sqsMessageId", m.ID, "groupId", m.GroupID, "err", err)
 	}
 	c.metrics.MessageHandled("held_back", 0)
-	c.logger.InfoContext(dctx, "message held back behind an earlier failure of its group", "messageId", m.ID, "groupId", m.GroupID, "retryIn", delay.String())
+	c.logger.InfoContext(dctx, "message held back behind an earlier failure of its group", "sqsMessageId", m.ID, "groupId", m.GroupID, "retryIn", delay.String())
 }
 
 func (c *Consumer) giveBack(ctx context.Context, msgs []application.Message) {
@@ -168,11 +174,22 @@ func (c *Consumer) giveBack(ctx context.Context, msgs []application.Message) {
 	defer cancel()
 	for _, m := range msgs {
 		if err := c.queue.ChangeVisibility(dctx, m.ReceiptHandle, 0); err != nil {
-			c.logger.WarnContext(dctx, "message not returned to the queue; it reappears when its visibility expires", "messageId", m.ID, "err", err)
+			c.logger.WarnContext(dctx, "message not returned to the queue; it reappears when its visibility expires", "sqsMessageId", m.ID, "err", err)
 		}
 	}
 	c.metrics.MessageHandled("returned", 0)
 	c.logger.InfoContext(dctx, "returned unprocessed messages to the queue", "count", len(msgs))
+}
+
+func clip(s string) string {
+	if len(s) <= wager.MaxFieldLength {
+		return s
+	}
+	cut := wager.MaxFieldLength
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 func detached(ctx context.Context) (context.Context, context.CancelFunc) {

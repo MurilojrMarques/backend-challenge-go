@@ -1,13 +1,16 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -325,4 +328,46 @@ func TestConsumerDeadLettersPoisonedMessageIDsAtOnce(t *testing.T) {
 	assert.False(t, retried, "the poisoned message does not hold its group back")
 	assert.True(t, q.deleted["rh-next"], "the next message of the same wallet flows normally")
 	assert.True(t, apptest.BRL("90.00").Equal(h.Balance(t, w.ID)))
+}
+
+func TestConsumerLogCarriesOperationIdentifiers(t *testing.T) {
+	t.Parallel()
+	h := apptest.NewHarness(t)
+	q := newFakeQueue()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	c := NewConsumer(q, h.Wagers, ConsumerOptions{ConsumerName: "c", VisibilityTimeout: 30 * time.Second}, h.Metrics, logger, NewFault("", discard))
+	w := h.OpenWallet(t, "100.00")
+
+	q.enqueue(inGroup(message("sqs-1", envelope(t, w, "BET", "b1", "10.00"), 1), w.ID.String()))
+	_, err := c.tick(context.Background())
+	require.NoError(t, err)
+
+	var handled map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		if entry["msg"] == "message handled" {
+			handled = entry
+		}
+	}
+	require.NotNil(t, handled, buf.String())
+	assert.Equal(t, "msg-b1", handled["messageId"], "the envelope messageId is the durable identity")
+	assert.Equal(t, "sqs-1", handled["sqsMessageId"])
+	assert.Equal(t, w.ID.String(), handled["walletId"])
+	assert.Equal(t, "provider-a", handled["providerId"])
+	assert.Equal(t, "b1", handled["externalTransactionId"])
+	assert.NotEmpty(t, handled["transactionId"])
+	assert.NotContains(t, buf.String(), w.PlayerID.String(), "player ids are not logged")
+	assert.NotContains(t, buf.String(), "10.00", "amounts are not logged")
+}
+
+func TestClipBoundsProducerStrings(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "short", clip("short"))
+	long := strings.Repeat("é", 200)
+	clipped := clip(long)
+	assert.LessOrEqual(t, len(clipped), 131)
+	assert.True(t, utf8.ValidString(clipped), "clipping never splits a multi-byte character")
+	assert.True(t, strings.HasSuffix(clipped, "..."))
 }

@@ -35,6 +35,7 @@ func (h *walletHandler) open(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	annotate(r.Context(), "walletId", view.ID.String())
 	w.Header().Set("Location", "/wallets/"+view.ID.String())
 	writeJSON(w, http.StatusCreated, walletResponse(view))
 }
@@ -50,6 +51,7 @@ func (h *walletHandler) get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	annotate(r.Context(), "walletId", walletID.String())
 	view, err := h.service.Get(r.Context(), principal, walletID)
 	if err != nil {
 		writeError(w, r, err)
@@ -69,6 +71,7 @@ func (h *walletHandler) ledger(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	annotate(r.Context(), "walletId", walletID.String())
 	cursor, err := decodeCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
 		writeError(w, r, err)
@@ -101,6 +104,7 @@ func (h *walletHandler) reconcile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	annotate(r.Context(), "walletId", walletID.String())
 	rec, err := h.service.Reconcile(r.Context(), principal, walletID)
 	if err != nil {
 		writeError(w, r, err)
